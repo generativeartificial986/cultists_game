@@ -45,7 +45,7 @@ Original file is located at
 
 # -*- coding: utf-8 -*-
 """Game Server (server.py) - Voting System Update"""
-
+import os
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import random
@@ -1326,5 +1326,6 @@ def index():
 if __name__ == '__main__':
     reset_game()
     socketio.start_background_task(game_loop)
-    print("Starting Flask-SocketIO server on http://0.0.0.0:5000")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    port = int(os.environ.get('PORT', 5000))
+    print(f"Starting Flask-SocketIO server on port {port}")
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
