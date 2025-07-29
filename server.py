@@ -95,6 +95,24 @@ def handle_connect(auth):
         clients[sid] = pid
         join_room(sid)
         emit('initial_connect', {"player_id": pid}, room=sid)
+
+        # Inside the handle_connect function in server.py
+
+if pid:
+    clients[sid] = pid
+    join_room(sid)
+    emit('initial_connect', {"player_id": pid}, room=sid)
+
+    # ADD THIS BLOCK TO HANDLE LOBBY RECONNECTS
+    if game_state.current_phase == "Lobby":
+        if game_state.desired_players_count == 0:
+            emit('prompt_set_player_count', room=sid)
+        else:
+            emit('prompt_for_name', room=sid)
+
+    broadcast_game_state()
+    return
+        
         broadcast_game_state()
         return
 
