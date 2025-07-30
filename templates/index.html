@@ -307,7 +307,6 @@
     let playerId, playerName="Guest", playerRole="Unknown", playerHand=[], playerStatusEffects={}, playerIsAlive=true, playerIsAsleep=false;
     let currentPhase="Connecting", roundNumber=0, globalStatusEffects={}, publicAnnouncements=[], alivePlayersInfo=[], deadPlayersInfo=[], eveningSubmittedCount=0, nightAsleepCount=0, morningReadyCount=0;
     let apocalypseVoteTarget=null, apocalypseVotes={}, desiredPlayersCount=0, gameSetupCompleted=false, lastPhaseStartTime=0, dawnActivePlayersCount=0, dawnCompletedActionsCount=0, cultistKillVotes={}, cultistKillTarget=null;
-    let lobbyReadyCount = 0, lobbyReadyPlayers = [];
     
     let votingSubPhase = "Inactive", votingNominations = {}, nominatedSpeakers = [], currentSpeaker = null, votersReadyForExecutionCount = 0, votingFinalVotes = {};
     let duskReadyCount = 0;
@@ -351,7 +350,6 @@
       }
 
       roundNumber = data.round_number; globalStatusEffects = data.global_status_effects; publicAnnouncements = data.public_announcements; alivePlayersInfo = data.alive_players; deadPlayersInfo = data.dead_players; eveningSubmittedCount = data.evening_submitted_count; nightAsleepCount = data.night_asleep_count; morningReadyCount = data.morning_ready_count; apocalypseVoteTarget = data.apocalypse_vote_target; apocalypseVotes = data.apocalypse_votes || {}; lastPhaseStartTime = data.last_phase_start_time; dawnActivePlayersCount = data.dawn_active_players_count; dawnCompletedActionsCount = data.dawn_completed_actions_count; desiredPlayersCount = data.desired_players_count; gameSetupCompleted = data.game_setup_completed; cultistKillVotes = data.cultist_kill_votes || {}; cultistKillTarget = data.cultist_kill_target;
-      lobbyReadyCount = data.lobby_ready_count; lobbyReadyPlayers = data.lobby_ready_players || [];
       votingSubPhase = data.voting_sub_phase; votingNominations = data.voting_nominations || {}; nominatedSpeakers = data.nominated_speakers || []; currentSpeaker = data.current_speaker; votersReadyForExecutionCount = data.voters_ready_for_execution_count; votingFinalVotes = data.voting_final_votes || {};
       duskReadyCount = data.dusk_ready_count;
       updateGUI();
@@ -505,7 +503,7 @@
       if (timers[timerKey]) startTimer(timers[timerKey]);
       else timerDisplay.textContent = "No timer";
 
-      if(currentPhase === "Lobby") progressDisplay.textContent = `${lobbyReadyCount}/${desiredPlayersCount} Players Ready`;
+      if(currentPhase === "Lobby") progressDisplay.textContent = `${alivePlayersInfo.length}/${desiredPlayersCount} players joined.`;
       else if (currentPhase === 'Voting' && votingSubPhase === 'Speaking') {
         progressDisplay.textContent = currentSpeaker ? `Speaking: ${currentSpeaker}` : 'Waiting for next speaker...';
       } else {
@@ -553,11 +551,6 @@
             if (currentSpeaker === p.name) {
                 classes.push(...'border-4 border-cyan-400 ring-4 ring-cyan-500 animate-pulse-flame'.split(' '));
             }
-            // MODIFIED: Show ready status in lobby
-            if (currentPhase === 'Lobby' && lobbyReadyPlayers.includes(p.player_id)) {
-                classes.push('border-2', 'border-green-400');
-            }
-
             pe.className = classes.join(' ');
             let content = p.name;
             
@@ -622,22 +615,9 @@
       actionButton.textContent = "Waiting...";
 
       if(currentPhase === "Lobby"){
-        const namedPlayers = alivePlayersInfo.filter(p => !p.name.startsWith("Guest_"));
-        const amIReady = lobbyReadyPlayers.includes(playerId);
-
-        if(!desiredPlayersCount) { 
-            actionButton.textContent = "Set Player Count"; 
-            actionButton.onclick = showSetPlayerCountDialog; 
-            actionButton.disabled = false; 
-        } else if(namedPlayers.length < desiredPlayersCount) {
-            actionButton.textContent = `Waiting for ${desiredPlayersCount - namedPlayers.length} more players...`;
-        } else if (amIReady) {
-            actionButton.textContent = "Waiting for other players...";
-        } else { 
-            actionButton.textContent = "Ready to Start"; 
-            actionButton.onclick = () => socket.emit('start_game_request'); 
-            actionButton.disabled = false; 
-        }
+        if(!desiredPlayersCount) { actionButton.textContent = "Set Player Count"; actionButton.onclick = showSetPlayerCountDialog; actionButton.disabled = false; }
+        else if(alivePlayersInfo.length < desiredPlayersCount) actionButton.textContent = `Waiting for ${desiredPlayersCount - alivePlayersInfo.length} more players...`;
+        else { actionButton.textContent = "Start Game"; actionButton.onclick = () => socket.emit('start_game_request'); actionButton.disabled = false; }
         if(!actionButton.disabled) actionButton.className = 'action-button w-full bg-blue-600 hover:bg-blue-700';
         return;
       }
@@ -1098,7 +1078,7 @@
 
     function promptForPlayerTarget(card, dialogElements) {
         let selectedTargets = [];
-        let selectedSacrifices = []; // MODIFIED: Will now store full card objects
+        let selectedSacrifices = [];
         const { overlay, dialogContent, dialogBody } = dialogElements;
         dialogContent.querySelector('h2').textContent = `Play: ${card.name}`;
         dialogContent.querySelectorAll('button').forEach(b => b.remove());
@@ -1239,15 +1219,15 @@
             },
             {
                 title: "POINTS",
-                content: "<strong>CULTISTS!</strong> is played in multiple games, with each game lasting about 20 minutes. You will earn points each game depending on your performance.<br><br>Regardless of whether you are dead or alive, if your side wins by the end of the game, you will earn 2 points.<br><br>At the start of the game if you are a Villager, you may sign a <strong>Contract</strong> with the Dark God. If you sign your <strong>Contract</strong> and complete it, you will earn 1 extra points. If you fail your <strong>Contract</strong>, you will lose 1 point.<br><br>But be careful, Cultists! Among you may be an <strong>Enlightened Cultist</strong>. Their objective is different — their goal is to be the only living Cultist. If they are the only Cultist left, this will be announced by the Dark God. If they survive until the following Morning, they will automatically win the game.<br><br>If the <strong>Enlightened Cultist</strong> wins, they will earn 4 points. Neither the Cultists nor the Villagers will win."
+                content: "<strong>CULTISTS!</strong> is played in multiple games, with each game lasting about 20 minutes. You will earn points each game depending on your performance.<br><br>Regardless of whether you are dead or alive, if your side wins by the end of the game, you will earn 2 points.<br><br>But be careful, Cultists! Among you may be an <strong>Enlightened Cultist</strong>. Their objective is different — their goal is to be the only living Cultist. If they are the only Cultist left, this will be announced by the Dark God. If they survive until the following Morning, they will automatically win the game.<br><br>If the <strong>Enlightened Cultist</strong> wins, they will earn 4 points. Neither the Cultists nor the Villagers will win."
             },
             {
                 title: "GAMEPLAY",
-                content: "Each round consist of five phases: <strong>Morning</strong>, <strong>Voting</strong>, <strong>Dusk</strong>, <strong>Evening</strong>, and <strong>Night</strong>.<br><br>During the <strong>Morning</strong>, you will learn who was killed the previous <strong>Night</strong> and hear any announcements. You will also have time to discuss and debate.<br><br>During <strong>Voting</strong>, you will nominate up to two players who you think are guilty. Each player with at least two nominations will have 30 seconds to plead their case, then you will have 30 seconds to vote on whether to execute one of the nominated players.<br><br>During <strong>Dusk</strong>, you will have the opportunity to play any cards relevant to voting.<br><br>During <strong>Evening</strong>, you will have 45 seconds to play cards from your hand.<br><br>During <strong>Night</strong>, everyone will close their eyes and the Cultists will awaken to vote on who to kill.<br><br>Most cards can only be played during specific phases. This information is included on each card."
+                content: "Each round consist of five phases: <strong>Morning</strong>, <strong>Voting</strong>, <strong>Dusk</strong>, <strong>Evening</strong>, and <strong>Night</strong>.<br><br>During the <strong>Morning</strong>, you will learn who was killed the previous <strong>Night</strong> and hear any announcements. You will also have time to discuss and debate.<br><br>During <strong>Voting</strong>, you will nominate up to two players who you think are guilty. Each player with at least two nominations will have 30 seconds to plead their case, then you will have 30 seconds to vote on whether to execute one of the nominated players.<br><br>During <strong>Dusk</strong>, you will have the opportunity to play any cards relevant to voting.<br><br>During <strong>Evening</strong>, you will have 45 seconds to play cards from your hand.<br><br>During <strong>Night</strong>, everyone will close their eyes and the Cultists will awaken to vote on who to kill."
             },
             {
                 title: "CARDS",
-                content: "You will start the game with two cards and receive a new card every Morning.<br><br>Playing cards allow you to sabotage your opponents, learn new information, and protect yourself from attacks! Information about each card can be viewed by tapping it.<br><br>Many cards will have a cost and require you to sacrifice other cards in order to play them.<br><br>Most cards are played during Evening.<br><br>Some cards will cause temporary effects. For example, if <strong>Silence</strong> is played against you, you will see a yellow banner and your nameplate will be highlighted in yellow, which is visible to all players. While the banner is present, you may not speak or gesture. However, you can still play cards and vote."
+                content: "You will start the game with two cards and receive a new card every Morning.<br><br>Playing cards allow you to sabotage your opponents, learn new information, and protect yourself from attacks! Information about each card can be viewed by tapping it.<br><br>Many cards will have a cost and require you to sacrifice other cards in order to play them.<br><br>Some cards will cause temporary effects. For example, if <strong>Silence</strong> is played against you, you will see a yellow banner and your nameplate will be highlighted in yellow, which is visible to all players. While the banner is present, you may not speak or gesture. However, you can still play cards and vote."
             }
         ];
 
@@ -1320,6 +1300,7 @@
         
         showPage(currentPage);
     }
+
   </script>
 </body>
 </html>
