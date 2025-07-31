@@ -9,28 +9,29 @@ import uuid
 # You can now easily tweak the quantities here.
 DECK_COMPOSITION = {
     # --- Living Player Cards ---
-    "Compulsion": 0,
-    "Third Eye": 0,
-    "Harbinger of Doom": 0,
-    "Lazarus": 0,
-    "I Saw the Light": 0,
-    "Violent Delights": 0,
-    "Covet": 100,
-    "Immolation": 0,
-    "Act of God": 0,
-    "Feed the Maggots": 0,
-    "Screams from the Void": 0,
-    "False Idol": 0,
-    "Extended Delirium": 0,
-    "Silver Tongue": 0,
-    "Delirium": 100,
-    "Silence": 0,
-    "The Apocalypse": 100,
+    "Compulsion": 40,
+    "Third Eye": 80,
+    "Harbinger of Doom": 20,
+    "Lazarus": 50,
+    "I Saw the Light": 100,
+    "Violent Delights": 60,
+    "Covet": 60,
+    "Immolation": 50,
+    "Act of God": 40,
+    "Feed the Maggots": 40,
+    "Screams from the Void": 40,
+    "False Idol": 30,
+    "Extended Delirium": 40,
+    "Silver Tongue": 50,
+    "Delirium": 80,
+    "Silence": 90,
+    "The Apocalypse": 20,
 
     # --- Dead Player Cards ---
-    "Oh God, Please! Anything But This!": 100,
-    "Ghostly Silence": 0,
+    "Oh God, Please! Anything But This!": 3,
+    "Ghostly Silence": 5,
 }
+
 
 
 CARD_DEFINITIONS = {
