@@ -20,7 +20,7 @@ clients = {}             # Maps SID -> player_id
 player_name_to_id = {}   # Maps player name -> player_id
 
 # --- Configuration Constants ---
-INITIAL_HAND_SIZE = 10
+INITIAL_HAND_SIZE = 2
 # REMOVED: EVENING_TIMER_SECONDS is no longer needed
 VOTING_NOMINATION_TIMER_SECONDS = 30
 VOTING_SPEAKER_TIMER_SECONDS = 30
