@@ -217,26 +217,7 @@
     }
     .progress-dot {
         transition: background-color 0.3s ease;
-
-    /* --- START OF CHANGE --- */
-    @keyframes flesh-flicker {
-      0%, 100% { 
-        box-shadow: 0 0 8px #ffddc1, 0 0 12px #ffddc1 inset; 
-        border-color: #ffddc1; 
-      }
-      50% { 
-        box-shadow: 0 0 12px #ffbf89, 0 0 18px #ffbf89 inset; 
-        border-color: #ffbf89; 
-      }
     }
-    .flesh-candle-banner {
-      background-color: #E6BF83; /* A skin-like base color */
-      color: #4a2c2a; /* A dark, fleshy brown for text */
-      border: 2px solid #ffddc1;
-      text-shadow: 0 1px 1px rgba(0,0,0,0.3);
-      animation: flesh-flicker 1.5s infinite ease-in-out;
-    }
-    /* --- END OF CHANGE --- */
   </style>
 </head>
 <body class="flex flex-col text-sm">
@@ -339,7 +320,6 @@
         divine_protection: { bannerText: 'I HAVE SEEN THE LIGHT', bannerClasses: 'halo-effect', highlightClasses: 'halo-effect' },
         lazarus_effect: { bannerText: 'RESURRECTED', bannerClasses: 'decaying', highlightClasses: 'decaying', isPrivate: true },
         harbinger_quest: { bannerText: 'HARBINGER OF DOOM ACTIVE', bannerClasses: 'bg-gray-900 border-red-500 text-red-300 animate-pulse', isPrivate: true }
-        hand_of_glory_protection: { bannerText: 'HAND OF GLORY', bannerClasses: 'flesh-candle-banner', isPrivate: true }
     };
 
     const phaseBanner = document.getElementById('phase-banner'), timerDisplay = document.getElementById('timer-display'), progressDisplay = document.getElementById('action-progress'), playerHandDiv = document.getElementById('player-hand'), announcementsArea = document.getElementById('announcements-area'), playerListArea = document.getElementById('player-list-area'), actionButton = document.getElementById('action-button'), effectBannersContainer = document.getElementById('effect-banners-container');
