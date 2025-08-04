@@ -933,7 +933,7 @@ def apply_card_effect(player_id, card_obj, target_list=None):
     elif card_obj.effect_type == "silence":
         if t1_obj:
             effect_data = { "duration": card_obj.duration_rounds, "source_name": player.name, "target_name": t1_obj.name }
-            action = { "target_id": t1_obj.player_id, "effect_type": "silence", "source_id": player_id, "is_counterable": True, "is_countered": False, "effect_data": effect_data }False, "effect_data": effect_data }
+            action = { "target_id": t1_obj.player_id, "effect_type": "silence", "source_id": player_id, "is_counterable": True, "is_countered": False, "effect_data": effect_data }
             game_state.pending_night_actions.append(action)
             print(f"[CARD] {player.name} played Silence on {t1_obj.name}")
     elif card_obj.effect_type == "apocalypse_vote":
