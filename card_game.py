@@ -28,8 +28,8 @@ DECK_COMPOSITION = {
     "The Apocalypse": 20,
 
     # --- Dead Player Cards ---
-    "Oh God, Please! Anything But This!": 3,
-    "Ghostly Silence": 5,
+    "Oh God, Please! Anything But This!": 30,
+    "Ghostly Silence": 50,
 }
 
 
