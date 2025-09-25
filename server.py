@@ -738,9 +738,9 @@ def assign_roles():
     random.shuffle(pids)
     n = len(pids)
     if n <= 4: ccount = 1
-    elif n <= 8: ccount = 2
-    elif n <= 13: ccount = 3
-    else: ccount = 4
+    elif n <= 8: ccount = 1
+    elif n <= 13: ccount = 2
+    else: ccount = 3
     for i, pid in enumerate(pids):
         role = "Cultist" if i < ccount else "Villager"
         game_state.players[pid].role = role
