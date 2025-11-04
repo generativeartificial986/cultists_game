@@ -734,7 +734,7 @@ function updateActionButton(){
         if (hasReadied) actionButton.textContent = "Waiting for others...";
         return;
       }
-      if(currentPhase === "ApocalypseVote") {
+      if(currentPhase === "Apocalypse Vote") {
         const hasVoted = apocalypseVotes[playerId];
         actionButton.textContent = `Vote on ${apocalypseVoteTarget}`;
         actionButton.onclick = showApocalypseVoteDialog;
