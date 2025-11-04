@@ -218,6 +218,32 @@
     .progress-dot {
         transition: background-color 0.3s ease;
     }
+    /* --- START: ADD NEW CSS FOR HAND OF GLORY --- */
+    @keyframes warm-flicker {
+        0%, 100% {
+            box-shadow: 
+                0 0 6px rgba(252, 211, 77, 0.7), /* amber-300 */
+                0 0 12px rgba(245, 158, 11, 0.5), /* amber-500 */
+                0 0 20px rgba(180, 83, 9, 0.4);   /* amber-700 */
+            border-color: rgba(252, 211, 77, 0.9);
+            text-shadow: 0 0 2px rgba(253, 230, 138, 0.6); /* amber-200 */
+        }
+        50% {
+            box-shadow: 
+                0 0 10px rgba(253, 230, 138, 0.8), /* amber-200 */
+                0 0 20px rgba(252, 211, 77, 0.7), /* amber-300 */
+                0 0 30px rgba(217, 119, 6, 0.5);  /* amber-600 */
+            border-color: rgba(253, 230, 138, 1);
+            text-shadow: 0 0 4px rgba(253, 230, 138, 0.8);
+        }
+    }
+    .hand-of-glory-banner {
+        background-color: #78350f; /* amber-900 */
+        color: #fef3c7; /* amber-100 */
+        border: 2px solid #f59e0b; /* amber-500 */
+        animation: warm-flicker 1.8s infinite ease-in-out;
+    }
+    /* --- END: ADD NEW CSS FOR HAND OF GLORY --- */
   </style>
 </head>
 <body class="flex flex-col text-sm">
@@ -257,10 +283,12 @@
 
     <div class="bg-gray-800 p-4 rounded-lg shadow-md text-center">
       <button id="action-button" class="action-button w-full disabled-button" disabled>Connecting...</button>
-    </div>
+<button id="global-reset-button" class="action-button w-full bg-red-800 hover:bg-red-700 text-white mt-4">
+        RESET GAME
+      </button>
+      </div>
 
   </div>
-
   <div id="tutorial-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
       <div class="tutorial-modal-content w-full max-w-2xl rounded-2xl shadow-2xl border border-gray-700 p-6 md:p-8 flex flex-col">
           
@@ -310,6 +338,11 @@
 
     const STATUS_UI_MAP = {
         mark_of_the_beast: { bannerText: 'MARKED BY THE BEAST', bannerClasses: 'cursed-banner', highlightClasses: 'cursed-nameplate', isPrivate: true },
+        hand_of_glory_protection: { 
+            bannerText: 'HAND OF GLORY ACTIVE', 
+            bannerClasses: 'hand-of-glory-banner', 
+            isPrivate: true // This keeps it secret, so only the player sees it
+        },
         eternal_winter: { bannerText: 'SING BABY SING', bannerClasses: 'snowy-banner', highlightClasses: 'frosted' },
         silence: { bannerText: 'SILENCED', bannerClasses: 'bg-yellow-500 border-yellow-300', shadowStart: 'rgba(250, 204, 21, 0.4)', shadowEnd: 'rgba(250, 204, 21, 0.6)', highlightClasses: 'border-2 border-yellow-400 ring-2 ring-yellow-500' },
         delirium: { bannerText: 'DELIRIOUS', bannerClasses: 'bg-emerald-500 border-emerald-300', shadowStart: 'rgba(16, 185, 129, 0.4)', shadowEnd: 'rgba(16, 185, 129, 0.6)', highlightClasses: 'border-2 border-emerald-400 ring-2 ring-emerald-500' },
@@ -354,7 +387,12 @@
     socket.on('sleep_prompt', data => { announcementsArea.innerHTML += `<p class="text-yellow-300">${data.message}</p>`; announcementsArea.scrollTop = announcementsArea.scrollHeight; updateGUI(); });
     socket.on('cultist_wake_up', data => { announcementsArea.innerHTML += `<p class="text-red-300 font-bold">${data.message}</p>`; announcementsArea.scrollTop = announcementsArea.scrollHeight; updateGUI(); });
     socket.on('reveal_role', data => showRoleRevealDialog(data.role, data.objective));
-    
+    // --- ADD THIS HANDLER ---
+    socket.on('game_has_reset', data => {
+        alert(data.message); // Shows "The game was reset by an admin. Reloading..."
+        location.reload(); // Force the page to reload
+    });
+    // --- END OF NEW HANDLER ---
     socket.on('private_announcement', data => {
         showPrivateMessageDialog("A Private Message", data.message);
     });
@@ -382,7 +420,14 @@
     socket.on('play_tolling_bell', () => {
         playTollingBell();
     });
-
+    // START: ADD THE NEW, CORRECT LISTENER HERE
+    // This targets our new button: 'global-reset-button'
+    document.getElementById('global-reset-button').addEventListener('click', () => {
+        if (confirm("are you sure you want to reset the game?")) {
+            socket.emit('reset_game_request');
+        }
+    });
+    // END: ADD THE NEW, CORRECT LISTENER
     document.addEventListener('DOMContentLoaded', updateGUI);
 
     let timerId = null;
@@ -873,12 +918,31 @@ function updateActionButton(){
 
     function showCompulsionInitialDialog(isSelected) {
         const { overlay, dialogContent, dialogBody, closeButton } = createDialog("A Dark Compulsion");
-        closeButton.textContent = 'I understand';
+        
+        // 1. REMOVE the default red button
+        closeButton.remove(); 
+
         let message = `One of you has been compelled to say the word "Cultist" at least once before the next sundown. This will be on your honor. If you do not do this, you will be killed.`;
         if (isSelected) {
             message = `<strong class="text-red-400">You have been selected for compulsion.</strong><br><br>` + message;
         }
         dialogBody.innerHTML = `<p class="text-center">${message}</p>`;
+
+        // 2. CREATE a new button container, just like in your example
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3'; // 'mt-6' adds space
+
+        // 3. CREATE the new blue button
+        const iUnderstandBtn = document.createElement('button');
+        iUnderstandBtn.textContent = 'I understand';
+        iUnderstandBtn.className = 'action-button bg-blue-600 hover:bg-blue-700 text-white'; // The blue style
+        iUnderstandBtn.onclick = () => {
+            overlay.remove(); // The button just closes the dialog
+        };
+
+        // 4. ADD the new button to the container and the dialog
+        buttonContainer.appendChild(iUnderstandBtn);
+        dialogContent.appendChild(buttonContainer);
     }
 
     function showCompulsionResolutionDialog() {
