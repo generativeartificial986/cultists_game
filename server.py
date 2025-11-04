@@ -725,10 +725,21 @@ def handle_play_any_phase_card(data):
     for s_card in actual_sacrifices:
         player.remove_card_by_id(s_card.id)
 
-    apply_card_effect(pid, card, targets.get(card.id))
-    emit('action_confirmed', {"message": f"Played {card.name}!"}, room=sid)
-    broadcast_game_state()
-
+# --- ADD THIS NEW FUNCTION BELOW ---
+@socketio.on('reset_game_request')
+def handle_reset_game_request(data=None):
+    """Handles a client request to reset the entire game."""
+    sid = request.sid
+    print(f"[RESET] Game reset triggered by user {sid}.")
+    
+    # 1. Call your existing reset function
+    reset_game() 
+    
+    # 2. Tell all clients the game has reset so they can reload
+    emit('game_has_reset', 
+         {"message": "The game was reset by an admin. Reloading..."}, 
+         broadcast=True)
+# --- END OF NEW FUNCTION ---
 
 # --- Game Logic Helpers ---
 
@@ -749,9 +760,19 @@ def assign_roles():
 def deal_initial_hands():
     """Deals initial hand to all alive players."""
     for pid in game_state.alive_players:
+        player = game_state.players[pid]
+        
+        # 1. Deal the random cards
         cards = game_state.deck.deal(INITIAL_HAND_SIZE)
-        for c in cards: game_state.players[pid].add_card(c)
-        print(f"[DEAL] {game_state.players[pid].name} receives {len(cards)} cards")
+        for c in cards: player.add_card(c)
+        
+        # 2. Add the Hand of Glory
+        try:
+            hand_of_glory_card = Card("Hand of Glory")
+            player.add_card(hand_of_glory_card)
+            print(f"[DEAL] {player.name} receives {len(cards)} cards + Hand of Glory")
+        except ValueError as e:
+            print(f"[DEAL_ERROR] Could not create Hand of Glory: {e}")
 
 def broadcast_game_state():
     """Broadcasts public and private game state to all clients."""
@@ -863,13 +884,20 @@ def apply_card_effect(player_id, card_obj, target_list=None):
             # --- START OF FIX ---
             # The duration is now 3 to ensure it lasts for 2 full rounds.
             # The delayed_actions logic has been removed.
-            player.apply_status_effect('burning', 3)
+            player.apply_status_effect('burning', 2)
             game_state.public_announcements.append(f"{player.name} caught fire! They will die in two rounds unless saved.")
             print(f"[EFFECT] {player.name} caught fire from attacking {t1_obj.name}.")
             # --- END OF FIX ---
 
     print(f"[CARD_EFFECT] {player.name} playing {card_obj.name} with effect {card_obj.effect_type}")
     #... rest of the function continues    if target_list: print(f"[CARD_EFFECT] Targets: {target_list}")
+    
+    # --- ADD THIS NEW ELIF BLOCK ---
+    if card_obj.effect_type == "hand_of_glory":
+        # Apply a secret status effect. 
+        # We don't add this to STATUS_UI_MAP in index.html, so it stays hidden.
+        player.apply_status_effect("hand_of_glory_protection", 2)
+        print(f"[EFFECT] {player.name} secretly used Hand of Glory.")
 
     if card_obj.effect_type == "mark_of_the_beast":
         player.apply_status_effect("mark_of_the_beast", card_obj.duration_rounds)
@@ -1030,7 +1058,7 @@ def apply_card_effect(player_id, card_obj, target_list=None):
             print(f"[CARD] {player.name} played Covet on {t1_obj.name}. Effects are scheduled.")
     elif card_obj.effect_type == "violent_delights":
         quest_data = {
-            'expires_at_round': game_state.round_number + 3,
+            'expires_at_round': game_state.round_number + 2,
             'completed': False
         }
         player.apply_status_effect("violent_delights_quest", quest_data)
@@ -1104,7 +1132,13 @@ def resolve_dawn_actions():
         if not target_player: continue
         if not action.get("is_countered", False):
             if action["effect_type"] == "kill":
-                if "protected" in target_player.status_effects or "divine_protection" in target_player.status_effects:
+                if "hand_of_glory_protection" in target_player.status_effects:
+                    # Show your specific message
+                    game_state.public_announcements.append(f"Cultists attempted to kill {target_player.name} last night, but they were saved by the glow of the Hand of Glory!")
+                    # Remove the effect so it's one-time use
+                    target_player.status_effects.pop("hand_of_glory_protection", None)
+                    print(f"[EFFECT] {target_player.name} was saved by Hand of Glory.")
+                elif "protected" in target_player.status_effects or "divine_protection" in target_player.status_effects:
                     game_state.public_announcements.append(f"{target_player.name} was protected from death!")
                 else:
                     game_state.public_announcements.append(f"{target_player.name} was killed last night!");

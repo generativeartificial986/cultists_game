@@ -47,6 +47,18 @@ CARD_DEFINITIONS = {
         "dead_card": False,
         "duration_rounds": 3,
     },
+    "Hand of Glory": {
+        "name": "Hand of Glory",
+        "description": "This macabre artifact capable prevents Cultists for killing you for one Night! The Cultists cannot see if you use this card. The flames of the Hand extinguish by Morning and this card may only be played once per game. Use it wisely!",
+        "phase_restriction": ["Evening"], # 
+        "target_type": "self",
+        "effect_type": "hand_of_glory",   # This is a new, unique effect type
+        "is_public": False,             # 
+        "reveals_player": False,        #
+        "sacrifice_cards": 0,           # 
+        "dead_card": False,
+        "duration_rounds": 1,           # It lasts for 1 night's resolution
+    },
     "Oh God, Please! Anything But This!": {
         "name": "Oh God, Please! Anything But This!",
         "description": "Command a player to sing Mariah Carey’s 1994 hit song \"All I Want for Christmas Is You\" repeatedly, giving the Villagers a very good reason to vote to kill them. They may speak, but only to the tune of the song. Wears off at the next sundown.",
