@@ -305,7 +305,7 @@ def handle_submit_evening_cards(data):
                     players_to_kill_from_burn.append((p_id, p_obj.name))
         
         for p_id, p_name in players_to_kill_from_burn:
-            game_state.public_announcements.append(f"{p_name} has succumbed to their burns and died!")
+            game_state.public_announcements.append(f"{p_name} succumbed to their burns and died!")
             kill_player(p_id, "Burning")
         # --- END OF FIX ---
 
@@ -485,6 +485,7 @@ def handle_harbinger_kill(data):
     kill_player(target_player.player_id, "Harbinger of Doom", [pid])
     
     player.status_effects.pop('harbinger_quest', None)
+    game_state.global_status_effects.pop('harbinger_quest', None)
     
     player.has_submitted_evening_cards = True
     game_state.evening_submitted_players.add(pid)
@@ -1119,6 +1120,7 @@ def apply_card_effect(player_id, card_obj, target_list=None):
             'execute_at_round': game_state.round_number + 3
         }
         player.apply_status_effect("harbinger_quest", quest_data)
+        game_state.global_status_effects["harbinger_quest"] = True
         game_state.public_announcements.append(f"{player.name} has performed a dark ritual, becoming a Harbinger of Doom! In three rounds, they will choose a victim to be sacrificed.")
         print(f"[QUEST] {player.name} started Harbinger of Doom. Kill will be available in round {quest_data['execute_at_round']}.")
 
@@ -1134,7 +1136,7 @@ def resolve_dawn_actions():
             if action["effect_type"] == "kill":
                 if "hand_of_glory_protection" in target_player.status_effects:
                     # Show your specific message
-                    game_state.public_announcements.append(f"Cultists attempted to kill {target_player.name} last night, but they were saved by the glow of the Hand of Glory!")
+                    game_state.public_announcements.append(f"Cultists attempted to kill {target_player.name} last night, but {target_player.name} was saved by the glow of the Hand of Glory!")
                     # Remove the effect so it's one-time use
                     target_player.status_effects.pop("hand_of_glory_protection", None)
                     print(f"[EFFECT] {target_player.name} was saved by Hand of Glory.")
@@ -1177,7 +1179,7 @@ def resolve_dawn_actions():
         if player and 'violent_delights_quest' in player.status_effects:
             quest_data = player.status_effects['violent_delights_quest']
             if quest_data.get('completed'):
-                game_state.public_announcements.append(f"{player.name} delighted in their own violence, earning them two additional cards for their deviancy!")
+                game_state.public_announcements.append(f"{player.name} delighted in violence, earning them two additional cards for their deviancy!")
                 new_cards = game_state.deck.deal(2)
                 for card in new_cards:
                     player.add_card(card)
@@ -1202,7 +1204,7 @@ def resolve_dawn_actions():
         if not action.get("is_countered", False):
             if action["effect_type"] == "silence":
                 duration, source_name, target_name = action["effect_data"].get("duration", 1), action["effect_data"].get("source_name", "Someone"), action["effect_data"].get("target_name", "a player")
-                target_player.apply_status_effect("silence", duration); game_state.public_announcements.append(f"{target_name} has been silenced by {source_name}!")
+                target_player.apply_status_effect("silence", duration); game_state.public_announcements.append(f"{target_name} was silenced by {source_name}!")
             elif action["effect_type"] == "apply_screams_from_the_void_debuffs":
                 duration = action["effect_data"].get("duration", 1)
                 target_player.apply_status_effect("silence", duration)
@@ -1214,7 +1216,7 @@ def resolve_dawn_actions():
                 duration = action["effect_data"].get("duration", 1)
                 target_player.apply_status_effect("silence", duration)
                 target_player.apply_status_effect("delirium", duration)
-                game_state.public_announcements.append(f"The curse from the False Idol has taken hold of {target_player.name}!")
+                game_state.public_announcements.append(f"A punishment for praying to the False Idol was given to {target_player.name}!")
                 print(f"[EFFECT] Applied False Idol debuffs to {target_player.name}.")
             elif action["effect_type"] == "protect":
                 target_player.apply_status_effect("protected", action["effect_data"].get("duration", 1))
@@ -1225,7 +1227,7 @@ def resolve_dawn_actions():
                 target_name = action["effect_data"].get("target_name", "A player")
                 target_player.hand.clear()
                 game_state.public_announcements.append(f"{target_name} came back late to find their home in flames, losing all of their cards! The culprit has yet to be found...")
-                print(f"[EFFECT] {target_name}'s hand was cleared by Pyromania.")
+                print(f"[EFFECT] {target_name}'s hand was cleared by Act of God.")
         else:
             game_state.public_announcements.append(f"{target_player.name} countered a {action['effect_type']} attempt!")
     game_state.pending_night_actions.clear()
@@ -1249,6 +1251,7 @@ def kill_player(player_id, source, killers=[]):
         if 'harbinger_quest' in pl.status_effects:
             # Remove the status effect to cancel the quest.
             pl.status_effects.pop('harbinger_quest', None)
+            game_state.global_status_effects.pop('harbinger_quest', None)
             # Add the special announcement. The generic death message will be on its own line.
             game_state.public_announcements.append("Their death caused the ritual for Harbinger of Doom to be interrupted.")
             print(f"[QUEST] {pl.name}'s death interrupted their Harbinger of Doom quest.")
