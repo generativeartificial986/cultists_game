@@ -9,6 +9,7 @@ import uuid
 # You can now easily tweak the quantities here.
 DECK_COMPOSITION = {
     # --- Living Player Cards ---
+    "Mark of the Beast": 40,
     "Compulsion": 40,
     "Third Eye": 80,
     "Harbinger of Doom": 20,
