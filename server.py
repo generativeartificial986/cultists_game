@@ -1456,6 +1456,12 @@ def game_loop():
         elif (phase == "Voting" and sub_phase == "Speaking" and game_state.current_speaker_index != -1 and now - start_time >= VOTING_SPEAKER_TIMER_SECONDS):
             game_state.current_speaker_index += 1
             start_next_speaker_turn()
+        elif (phase == "ApocalypseVote" and now - start_time >= VOTING_EXECUTION_TIMER_SECONDS):
+            print("[TIMER] Apocalypse vote is up.")
+            # resolve_apocalypse_vote() already advances the phase,
+            # so we just need to call it and broadcast.
+            resolve_apocalypse_vote()
+            broadcast_game_state()
         elif (phase == "Voting" and sub_phase == "Execution" and now - start_time >= VOTING_EXECUTION_TIMER_SECONDS):
             print("[TIMER] Execution vote is up.")
             resolve_execution_vote()
