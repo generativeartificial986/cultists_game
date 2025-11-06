@@ -290,7 +290,7 @@ CARD_DEFINITIONS = {
     },
     "The Apocalypse": {
         "name": "The Apocalypse",
-        "description": "Force an immediate vote to reveal a player's role. If vote fails, trigger Carnage.",
+        "description": "Force an immediate vote to reveal a player's role. If the vote fails, this triggers Carnage, allowing the Cultists to kill two players the following Night!",
         "phase_restriction": ["Evening"],
         "target_type": "other_player",
         "effect_type": "apocalypse_vote",
