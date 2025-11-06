@@ -701,6 +701,28 @@ def handle_play_any_phase_card(data):
     if not pid or not player or not card:
         return
 
+    # --- START OF FIX ---
+    # Add special logic for False Idol averting an Apocalypse
+    if card.name == "False Idol" and game_state.current_phase == "ApocalypseVote":
+        player.remove_card_by_id(card.id) # Consume the card
+        
+        # We don't need to check sacrifices for this, as it's 0
+
+        game_state.public_announcements.append(f"{player.name} played False Idol, averting The Apocalypse! The vote is cancelled.")
+        print(f"[APOCALYPSE] {player.name} cancelled The Apocalypse with False Idol.")
+
+        # Reset all apocalypse vote state
+        game_state.apocalypse_vote_target = None
+        game_state.apocalypse_votes.clear()
+        
+        # Manually advance the phase to Night (which is what resolve_apocalypse_vote would do)
+        game_state.advance_phase()
+        
+        emit('action_confirmed', {"message": "You have averted The Apocalypse!"}, room=sid)
+        broadcast_game_state()
+        return # Skip the rest of the function
+    # --- END OF FIX ---
+    
     if game_state.current_phase not in card.phase_restriction and "Any" not in card.phase_restriction:
         emit('error', {"message": f"Cannot play {card.name} during the {game_state.current_phase} phase."}, room=sid)
         return
