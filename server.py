@@ -639,7 +639,7 @@ def handle_ready_for_evening(data=None):
     game_state.dusk_ready_players.add(pid)
     broadcast_game_state()
 
-    if len(game_state.dusk_ready_players) >= len(game_state.players):
+    if len(game_state.dusk_ready_players) >= len(game_state.alive_players):
         game_state.last_phase_start_time = time.time()
         game_state.advance_phase()
         broadcast_game_state()
