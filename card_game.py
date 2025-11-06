@@ -206,8 +206,8 @@ CARD_DEFINITIONS = {
     },
     "False Idol": {
         "name": "False Idol",
-        "description": "Pray to the Dark God and learn if at least one of the Dead is a Cultist. However, you cannot speak or use any cards for one full round.",
-        "phase_restriction": ["Evening"],
+        "description": "Pray to the Dark God and learn if at least one of the Dead is a Cultist. However, you cannot speak or use any cards for one full round. This card may also be played during an Apocalypse Vote to immediately cancel the vote and avert The Apocalypse.",
+        "phase_restriction": ["Evening", "ApocalypseVote"],
         "target_type": "self",
         "effect_type": "false_idol",
         "is_public": True,
