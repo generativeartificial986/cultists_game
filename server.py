@@ -709,18 +709,29 @@ def handle_play_any_phase_card(data):
         # We don't need to check sacrifices for this, as it's 0
 
         game_state.public_announcements.append(f"{player.name} played False Idol, averting The Apocalypse! The vote is cancelled.")
-        print(f"[APOCALYPSE] {player.name} cancelled The Apocalypse with False Idol.")
+        print(f"[APOCALYPSE] {player.name} prevented The Apocalypse with False Idol.")
 
         # Reset all apocalypse vote state
         game_state.apocalypse_vote_target = None
         game_state.apocalypse_votes.clear()
+
+# --- RE-ORDERED LOGIC ---
+        # 1. Broadcast the "Averted" message FIRST
+        emit('action_confirmed', {"message": "You averted The Apocalypse!"}, room=sid)
+        broadcast_game_state()
         
-        # Manually advance the phase to Night (which is what resolve_apocalypse_vote would do)
+        # 2. Pause so players can read the announcement
+        socketio.sleep(ANNOUNCEMENT_DELAY_SECONDS) 
+
+        # 3. NOW advance the phase (which will clear the announcement)
         game_state.advance_phase()
         
-        emit('action_confirmed', {"message": "You have averted The Apocalypse!"}, room=sid)
+        # 4. Broadcast the new 'Night' phase state
         broadcast_game_state()
         return # Skip the rest of the function
+        
+        # Manually advance the phase to Night (which is what resolve_apocalypse_vote would do)
+
     # --- END OF FIX ---
     
     if game_state.current_phase not in card.phase_restriction and "Any" not in card.phase_restriction:

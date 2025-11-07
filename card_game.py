@@ -21,12 +21,31 @@ DECK_COMPOSITION = {
     "Act of God": 40,
     "Feed the Maggots": 40,
     "Screams from the Void": 40,
+    "False Idol": 3000,
+    "Extended Delirium": 40,
+    "Silver Tongue": 50,
+    "Delirium": 80,
+    "Silence": 90,
+    "The Apocalypse": 3000, 
+'''
+ "Compulsion": 40,
+    "Third Eye": 80,
+    "Harbinger of Doom": 20,
+    "Lazarus": 50,
+    "I Saw the Light": 100,
+    "Violent Delights": 60,
+    "Covet": 60,
+    "Immolation": 50,
+    "Act of God": 40,
+    "Feed the Maggots": 40,
+    "Screams from the Void": 40,
     "False Idol": 30,
     "Extended Delirium": 40,
     "Silver Tongue": 50,
     "Delirium": 80,
     "Silence": 90,
-    "The Apocalypse": 20,
+    "The Apocalypse": 20, 
+'''
 
     # --- Dead Player Cards ---
     "Oh God, Please! Anything But This!": 30,
@@ -612,6 +631,7 @@ class GameState:
         elif self.current_phase == "Evening":
             if self.apocalypse_vote_target:
                 self.current_phase = "ApocalypseVote"
+                self.last_phase_start_time = time.time()
             else:
                 self.current_phase = "Night"
                 self.public_announcements.append("Night has fallen. All players must now close their eyes and sleep. Once the bell tolls three times, the Cultists may open their eyes! Villagers may not open their eyes until they hear birds chirping.")
