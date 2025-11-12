@@ -27,25 +27,8 @@ DECK_COMPOSITION = {
     "Delirium": 80,
     "Silence": 90,
     "The Apocalypse": 30, 
-'''
- "Compulsion": 40,
-    "Third Eye": 80,
-    "Harbinger of Doom": 20,
-    "Lazarus": 50,
-    "I Saw the Light": 100,
-    "Violent Delights": 60,
-    "Covet": 60,
-    "Immolation": 50,
-    "Act of God": 40,
-    "Feed the Maggots": 40,
-    "Screams from the Void": 40,
-    "False Idol": 30,
-    "Extended Delirium": 40,
-    "Silver Tongue": 50,
-    "Delirium": 80,
-    "Silence": 90,
-    "The Apocalypse": 20, 
-'''
+    "Doppelgänger": 20,
+    "Resurrection Ritual": 100,
 
     # --- Dead Player Cards ---
     "Oh God, Please! Anything But This!": 30,
@@ -66,6 +49,30 @@ CARD_DEFINITIONS = {
         "sacrifice_cards": 2,
         "dead_card": False,
         "duration_rounds": 3,
+    },
+    "Resurrection Ritual": {
+        "name": "Resurrection Ritual",
+        "description": "Sacrifice 1 card. Select 1 dead player to resurrect and 3 living players to assist. The assistants will be asked to sacrifice 2 cards. If all 3 assistants agree, the player is resurrected. If any assistant sabotages the ritual, it fails, and all sacrificed cards are lost.",
+        "phase_restriction": ["Evening"],
+        "target_type": "multi_target_ritual", # This is a new custom type
+        "effect_type": "resurrection_ritual_start",
+        "is_public": True,
+        "reveals_player": True,
+        "sacrifice_cards": 1,
+        "dead_card": False,
+        "duration_rounds": 0,
+    },
+    "Doppelgänger": {
+        "name": "Doppelgänger",
+        "description": "Select a living player. If that player dies, you will secretly take their role after their death. You will lose your current hand and gain their final living hand. If you die before your target, this effect is cancelled.",
+        "phase_restriction": ["Any"],
+        "target_type": "other_player",
+        "effect_type": "doppelganger",
+        "is_public": True,
+        "reveals_player": True,
+        "sacrifice_cards": 3,
+        "dead_card": False,
+        "duration_rounds": 0, # The effect is stored in a status effect
     },
     "Hand of Glory": {
         "name": "Hand of Glory",
@@ -271,30 +278,6 @@ CARD_DEFINITIONS = {
         "dead_card": False,
         "duration_rounds": 1,
     },
-    "Basic Card": {
-        "name": "Basic Card",
-        "description": "A simple card with no special effect.",
-        "phase_restriction": ["Evening"],
-        "target_type": "none",
-        "effect_type": "none",
-        "is_public": False,
-        "reveals_player": False,
-        "sacrifice_cards": 0,
-        "dead_card": False,
-        "duration_rounds": 0,
-    },
-    "Protection Charm": {
-        "name": "Protection Charm",
-        "description": "Protect yourself from death for one round. Announced next Morning if successful.",
-        "phase_restriction": ["Evening", "Night"],
-        "target_type": "self",
-        "effect_type": "protect",
-        "is_public": False,
-        "reveals_player": False,
-        "sacrifice_cards": 0,
-        "dead_card": False,
-        "duration_rounds": 1,
-    },
     "Silence": {
         "name": "Silence",
         "description": "Silence another player for one round. They cannot speak in person.",
@@ -391,18 +374,6 @@ CARD_DEFINITIONS = {
         "dead_card": True,
         "duration_rounds": 1,
     },
-    "Resurrection Ritual": {
-        "name": "Resurrection Ritual",
-        "description": "As a dead player, resurrect a dead player. (Requires specific conditions, e.g., only one dead player can be resurrected per game, or only if specific cards are sacrificed).",
-        "phase_restriction": ["Evening"],
-        "target_type": "dead_player",
-        "effect_type": "resurrect",
-        "is_public": True,
-        "reveals_player": False,
-        "sacrifice_cards": 2,
-        "dead_card": True,
-        "duration_rounds": 0,
-    },
 }
 
 
@@ -466,6 +437,8 @@ class Player:
     def __init__(self, player_id, name):
         self.player_id = player_id
         self.name = name
+        self.score = 0
+        self.contract = None
         self.role = None
         self.hand = []
         self.is_alive = True
@@ -551,6 +524,9 @@ class GameState:
         self.global_status_effects = {}
         self.public_announcements = []
         self.lobby_ready_players = set() # ADDED: Track ready players in lobby
+        self.death_log = []
+        self.active_rituals = {}
+        self.game_scores = {}
 
         self.evening_submitted_players = set()
         self.night_asleep_players = set()
@@ -611,18 +587,90 @@ class GameState:
         num_cultists_alive = sum(1 for pid in self.alive_players if self.players[pid].role == "Cultist")
 
         if num_cultists_alive == 0:
-            self.public_announcements.append("All Cultists have been eliminated! Villagers win!")
-            return True, "Villagers"
+            # --- START OF FIX ---
+            # Check if a Doppelgänger is about to become a Cultist.
+            # If so, the game is NOT over yet!
+            pending_cultist_conversions = any(
+                action['type'] == 'doppelganger_transform' and action['new_role'] == 'Cultist'
+                for action in self.delayed_actions
+            )
+            
+            if pending_cultist_conversions:
+                print("[GAME_OVER_CHECK] Game over averted: A Doppelgänger is pending conversion to Cultist.")
+                return False, None # The game is not over
+            # --- END OF FIX ---
+            message = "All Cultists have been eliminated!"
+            
+            # Find all dead cultists in the log
+            cultist_deaths = [d for d in self.death_log if d['role'] == 'Cultist']
+            
+            death_summaries = []
+            for death in cultist_deaths:
+                # Clean up the 'source' text to be more readable
+                source_text = death['source'].lower()
+                if source_text in ['execution', 'voting']:
+                    source_text = 'by voting'
+                elif source_text == 'burning':
+                    source_text = 'by burning'
+                elif source_text == 'cultists':
+                    source_text = 'by Cultists'
+                elif source_text == 'harbinger of doom':
+                    source_text = 'by the Harbinger of Doom'
+                elif source_text == 'compulsion':
+                    source_text = 'by a failed Compulsion'
+                else:
+                    source_text = f"by {death['source']}" # Default for other sources
+                
+                summary = f"Player {death['name']} was killed {source_text} during Round {death['round']}."
+                death_summaries.append(summary)
+            
+            if death_summaries:
+                message += " " + " ".join(death_summaries)
+            
+            message += " Villagers win!"
+            self.public_announcements.append(message)
+            return True, "Villager"
         if num_villagers_alive <= num_cultists_alive:
-            self.public_announcements.append("Cultists outnumber Villagers! Cultists win!")
-            return True, "Cultists"
-        if num_villagers_alive == 0 and num_cultists_alive == 0:
-            self.public_announcements.append("Everyone is dead! It's a draw?")
-            return True, "Draw"
+            # --- START OF FIX ---
+            message = "Cultists outnumber Villagers!"
+            
+            # Find all dead villagers in the log
+            villager_deaths = [d for d in self.death_log if d['role'] == 'Villager']
+            
+            death_summaries = []
+            for death in villager_deaths:
+                # Clean up the 'source' text to be more readable
+                source_text = death['source'].lower()
+                if source_text in ['execution', 'voting']:
+                    source_text = 'by voting'
+                elif source_text == 'burning':
+                    source_text = 'by burning'
+                elif source_text == 'cultists':
+                    source_text = 'by Cultists'
+                elif source_text == 'harbinger of doom':
+                    source_text = 'by the Harbinger of Doom'
+                elif source_text == 'compulsion':
+                    source_text = 'by a failed Compulsion'
+                else:
+                    source_text = f"by {death['source']}" # Default for other sources
+                
+                summary = f"Player {death['name']} was killed {source_text} during Round {death['round']}."
+                death_summaries.append(summary)
+            
+            if death_summaries:
+                message += " " + " ".join(death_summaries)
+            
+            message += " Cultists win!"
+            self.public_announcements.append(message)
+            # --- END OF FIX ---
+            return True, "Cultist"
+# --- START OF FIX ---
+        # If neither win condition was met, the game is not over.
         return False, None
+        # --- END OF FIX ---
 
     def advance_phase(self):
-        if self.current_phase != "Night":
+        if self.current_phase != "Night" and self.current_phase != "GameOver":
             self.public_announcements = []
 
         if self.current_phase == "Lobby":
@@ -702,27 +750,59 @@ class GameState:
             self.public_announcements.append(f"Game Over! {winner} win!")
 
     def get_public_game_state(self):
-        cultist_votes_by_name = { self.players[voter_id].name: self.players[target_id].name for voter_id, target_id in self.cultist_kill_votes.items() }
+        # --- START OF FIX ---
+        
+        def get_safe_name(pid):
+            """Helper to get player name or return a placeholder if player disconnected."""
+            player = self.players.get(pid)
+            return player.name if player else f"Player({pid[:4]})"
+
+        cultist_votes_by_name = {
+            get_safe_name(voter_id): get_safe_name(target_id)
+            for voter_id, target_id in self.cultist_kill_votes.items()
+            # No need for 'if in self.players' here, get_safe_name handles it
+        }
+        
         public_nominations = {}
         for nominator_id, nominated_ids in self.voting_nominations.items():
-            nominator_name = self.players[nominator_id].name
-            nominated_names = [self.players[nid].name for nid in nominated_ids]
+            nominator_name = get_safe_name(nominator_id)
+            nominated_names = [get_safe_name(nid) for nid in nominated_ids]
             public_nominations[nominator_name] = nominated_names
+        
+        # Filter out disconnected players from these lists
+        safe_nominated_speakers = [pid for pid in self.nominated_speakers if pid in self.players]
+        
+        current_speaker_name = None
+        if (self.current_speaker_index != -1 and 
+            safe_nominated_speakers and 
+            self.current_speaker_index < len(safe_nominated_speakers)):
+            speaker_id = safe_nominated_speakers[self.current_speaker_index]
+            current_speaker_name = get_safe_name(speaker_id)
+
+        safe_final_votes = {
+            get_safe_name(voter_id): get_safe_name(target_id)
+            for voter_id, target_id in self.voting_final_votes.items()
+        }
 
         return {
             "current_phase": self.current_phase, "round_number": self.round_number, "global_status_effects": self.global_status_effects, "public_announcements": self.public_announcements,
-            "lobby_ready_count": len(self.lobby_ready_players), # ADDED
-            "lobby_ready_players": list(self.lobby_ready_players), # ADDED
+            "lobby_ready_count": len(self.lobby_ready_players),
+            "lobby_ready_players": list(self.lobby_ready_players),
             "evening_submitted_count": len(self.evening_submitted_players), "night_asleep_count": len(self.night_asleep_players), "morning_ready_count": len(self.morning_ready_players),
-            "voting_sub_phase": self.voting_sub_phase, "voting_nominations": public_nominations, "nominated_speakers": [self.players[pid].name for pid in self.nominated_speakers],
-            "current_speaker": self.players[self.nominated_speakers[self.current_speaker_index]].name if self.current_speaker_index != -1 and self.nominated_speakers and self.current_speaker_index < len(self.nominated_speakers) else None,
-            "voters_ready_for_execution_count": len(self.voters_ready_for_execution), "voting_final_votes": {self.players[voter_id].name: self.players[voted_id].name for voter_id, voted_id in self.voting_final_votes.items()},
+            "voting_sub_phase": self.voting_sub_phase, "voting_nominations": public_nominations, 
+            "nominated_speakers": [get_safe_name(pid) for pid in safe_nominated_speakers],
+            "current_speaker": current_speaker_name,
+            "voters_ready_for_execution_count": len(self.voters_ready_for_execution), 
+            "voting_final_votes": safe_final_votes,
             "voting_abstainers_count": len(self.voting_abstainers),
-            "dusk_ready_count": len(self.dusk_ready_players), "apocalypse_vote_target": self.players[self.apocalypse_vote_target].name if self.apocalypse_vote_target else None, "apocalypse_votes": self.apocalypse_votes,
+            "dusk_ready_count": len(self.dusk_ready_players), 
+            "apocalypse_vote_target": get_safe_name(self.apocalypse_vote_target) if self.apocalypse_vote_target else None, 
+            "apocalypse_votes": self.apocalypse_votes,
             "last_phase_start_time": self.last_phase_start_time, "dawn_active_players_count": len(self.dawn_active_players), "dawn_completed_actions_count": len(self.dawn_completed_actions),
-            "cultist_kill_votes": cultist_votes_by_name, "cultist_kill_target": self.players[self.cultist_kill_target].name if self.cultist_kill_target else None,
+            "cultist_kill_votes": cultist_votes_by_name, 
+            "cultist_kill_target": get_safe_name(self.cultist_kill_target) if self.cultist_kill_target else None,
         }
-
+        # --- END OF FIX ---
     def get_player_private_state(self, player_id):
         player = self.players[player_id]
         return {
@@ -730,3 +810,22 @@ class GameState:
             "has_completed_dawn_action": player.has_completed_dawn_action, "is_dawn_active_player": player.player_id in self.dawn_active_players,
             "pending_night_actions_for_player": [ action for action in self.pending_night_actions if action["target_id"] == player_id and action["is_counterable"] ]
         }
+
+# --- CONTRACTS ---
+
+CONTRACT_DEFINITIONS = {
+    "brothers_keeper": {
+        "name": "Brother's Keeper",
+        "description": "Select another player. If that player survives until the end of the game, earn an extra point. If that player dies, lose a point."
+    },
+    "lamb_of_god": {
+        "name": "Lamb of God",
+        "description": "As a peace-loving Villager, avoid any killing to earn an extra point. Lose one point if you cause anyone to die by voting or by playing Immolation and inflicting Burning, Harbinger of Doom and killing someone, Compulsion and killing a Cultist, or the Apocalypse and triggering Carnage.",
+        "target_type": "self" # This tells the UI not to ask for a target
+    },
+    "thick_skinned": {
+        "name": "Thick Skinned",
+        "description": "Avoid dying at least 2 times to earn an extra point. You must be saved by a Hand of Glory, brought back to life using Resurrection Ritual, cleansed with I Saw the Light while you are Burning, or play False Idol to prevent the Apocalypse. Lazarus does not count. If you do not avoid dying at least twice, lose 1 point.",
+        "target_type": "self"
+    }
+}

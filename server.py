@@ -5,9 +5,10 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import random
 import time
+import uuid
 from collections import defaultdict, Counter
 
-from card_game import GameState, Card, Player, CARD_DEFINITIONS
+from card_game import GameState, Card, Player, CARD_DEFINITIONS, CONTRACT_DEFINITIONS
 
 # --- Flask & SocketIO Setup ---
 app = Flask(__name__)
@@ -20,7 +21,7 @@ clients = {}             # Maps SID -> player_id
 player_name_to_id = {}   # Maps player name -> player_id
 
 # --- Configuration Constants ---
-INITIAL_HAND_SIZE = 3
+INITIAL_HAND_SIZE = 10
 # REMOVED: EVENING_TIMER_SECONDS is no longer needed
 VOTING_NOMINATION_TIMER_SECONDS = 30
 VOTING_SPEAKER_TIMER_SECONDS = 30
@@ -100,10 +101,16 @@ def handle_disconnect():
     if sid not in clients:
         return
 
-    pid = clients.pop(sid)
+    pid = clients.pop(sid) # Always remove the sid-pid mapping
     player = game_state.get_player(pid)
-    if player:
-        print(f"[DISCONNECT] Removing player: {player.name} ({pid})")
+    
+    if not player:
+        return # Player was already removed
+
+    # --- START OF FIX ---
+    # If the game is in the Lobby, it's safe to fully remove the player.
+    if game_state.current_phase == "Lobby":
+        print(f"[DISCONNECT] Removing player: {player.name} ({pid}) from Lobby.")
         game_state.players.pop(pid, None)
         if pid in game_state.alive_players:
             game_state.alive_players.remove(pid)
@@ -111,6 +118,7 @@ def handle_disconnect():
             game_state.dead_players.remove(pid)
         player_name_to_id.pop(player.name, None)
 
+        # Clean up all game-state lists
         game_state.lobby_ready_players.discard(pid)
         game_state.evening_submitted_players.discard(pid)
         game_state.night_asleep_players.discard(pid)
@@ -123,8 +131,7 @@ def handle_disconnect():
         game_state.apocalypse_votes.pop(pid, None)
         game_state.dusk_ready_players.discard(pid)
         game_state.voters_ready_for_execution.discard(pid)
-
-
+        
         bound = game_state.bound_players.pop(pid, None)
         if bound:
             game_state.bound_players.pop(bound, None)
@@ -133,6 +140,15 @@ def handle_disconnect():
             game_state.public_announcements.append(
                 f"{player.name}'s binding to {partner_name} broke due to disconnect."
             )
+
+    # If the game is IN PROGRESS, just log it. DO NOT remove the player.
+    # This gives them a chance to reconnect.
+    else:
+        print(f"[DISCONNECT] Player {player.name} disconnected. Awaiting reconnect...")
+        # We don't pop them from game_state.players
+        # We don't remove them from alive_players
+        # 'broadcast_game_state' will temporarily hide them
+    # --- END OF FIX ---
 
     broadcast_game_state()
 
@@ -267,7 +283,7 @@ def handle_submit_evening_cards(data):
         for s_card in actual_sacrifices:
             player.remove_card_by_id(s_card.id)
 
-        apply_card_effect(pid, c, targets.get(c.id))
+        apply_card_effect(pid, c, targets.get(c.id), sid)
 
     if game_state.current_phase == "Evening":
         player.has_submitted_evening_cards = True
@@ -329,7 +345,7 @@ def handle_play_special_card(data):
             return
 
         player.remove_card_by_id(card.id)
-        apply_card_effect(pid, card)
+        apply_card_effect(pid, card, sid=sid)
         emit('action_confirmed', {"message": "You have fed the maggots!"}, room=sid)
         broadcast_game_state()
 
@@ -339,7 +355,7 @@ def handle_play_special_card(data):
             return
 
         player.remove_card_by_id(card.id)
-        apply_card_effect(pid, card)
+        apply_card_effect(pid, card, sid=sid)
         emit('action_confirmed', {"message": "You have risen!"}, room=sid)
         broadcast_game_state()
 
@@ -366,9 +382,15 @@ def handle_toggle_sleep(data=None):
 def handle_compulsion_response(data):
     sid = request.sid
     pid = clients.get(sid)
-    player = game_state.get_player(pid)
+    player = game_state.get_player(pid) # This 'player' is the Cultist
     if not player or 'compelled' not in player.status_effects:
         return
+
+    # --- START: Lamb of God (Compulsion) Tweak ---
+    # Get the effect data *before* popping it
+    compulsion_data = player.status_effects.get('compelled', {})
+    caster_id = compulsion_data.get('caster_id')
+    # --- END: Lamb of God (Compulsion) Tweak ---
 
     success = data.get('success', False)
     player.status_effects.pop('compelled', None)
@@ -379,7 +401,19 @@ def handle_compulsion_response(data):
     else:
         game_state.public_announcements.append("The compelled Cultist failed and they were killed for their trespasses.")
         print(f"[QUEST] Compelled cultist {player.name} reported failure and will be killed.")
-        kill_player(pid, "Compulsion")
+        
+        # --- START: Lamb of God (Compulsion) Failure Check ---
+        if caster_id:
+            caster_player = game_state.get_player(caster_id)
+            if (caster_player and caster_player.contract and
+                caster_player.contract.get('key') == 'lamb_of_god' and
+                not caster_player.contract.get('failed')):
+                
+                caster_player.contract['failed'] = True
+                print(f"[CONTRACT] {caster_player.name} failed 'Lamb of God' by killing {player.name} with Compulsion.")
+        # --- END: Lamb of God (Compulsion) Failure Check ---
+
+        kill_player(pid, "Compulsion") # This 'pid' is the Cultist
 
     wake_cultists_for_kill_vote()
     broadcast_game_state()
@@ -480,6 +514,12 @@ def handle_harbinger_kill(data):
     if not target_player or not target_player.is_alive:
         emit('error', {"message": "Invalid target for Harbinger of Doom."}, room=sid)
         return
+
+    # --- START: Lamb of God Failure Check ---
+    if player.contract and player.contract.get('key') == 'lamb_of_god' and not player.contract.get('failed'):
+        player.contract['failed'] = True
+        print(f"[CONTRACT] {player.name} failed 'Lamb of God' by killing with Harbinger of Doom.")
+    # --- END: Lamb of God Failure Check ---
 
     game_state.public_announcements.append(f"The dark prophecy was fulfilled! {player.name}'s became the Harbinger of Doom and claimed the life of {target_player.name}!")
     kill_player(target_player.player_id, "Harbinger of Doom", [pid])
@@ -681,7 +721,7 @@ def handle_play_voting_card(data):
     for s_card in actual_sacrifices:
         player.remove_card_by_id(s_card.id)
 
-    apply_card_effect(pid, card, targets.get(card.id))
+    apply_card_effect(pid, card, targets.get(card.id), sid)
     emit('action_confirmed', {"message": f"Played {card.name}!"}, room=sid)
     broadcast_game_state()
 
@@ -708,12 +748,23 @@ def handle_play_any_phase_card(data):
         
         # We don't need to check sacrifices for this, as it's 0
 
+        # --- START: Thick Skinned Increment ---
+        # The player who played the card (player) gets the credit
+        increment_contract_avoid(player.player_id)
+        # --- END: Thick Skinned Increment ---
+
+        
+
         game_state.public_announcements.append(f"{player.name} played False Idol, averting The Apocalypse! The vote is cancelled.")
         print(f"[APOCALYPSE] {player.name} prevented The Apocalypse with False Idol.")
 
         # Reset all apocalypse vote state
         game_state.apocalypse_vote_target = None
         game_state.apocalypse_votes.clear()
+        # --- START: Lamb of God (False Idol) Cleanup ---
+        # Clear the caster ID so they don't get blamed later!
+        game_state.global_status_effects.pop('apocalypse_caster_id', None)
+        # --- END: Lamb of God (False Idol) Cleanup ---
 
 # --- RE-ORDERED LOGIC ---
         # 1. Broadcast the "Averted" message FIRST
@@ -758,6 +809,124 @@ def handle_play_any_phase_card(data):
 
     for s_card in actual_sacrifices:
         player.remove_card_by_id(s_card.id)
+    apply_card_effect(pid, card, targets.get(card.id), sid)
+
+@socketio.on('submit_ritual_response')
+def handle_submit_ritual_response(data):
+    """Handles an assistant's response to the Resurrection Ritual."""
+    sid = request.sid
+    pid = clients.get(sid)
+    player = game_state.get_player(pid)
+    
+    ritual_id = data.get('ritual_id')
+    sacrificed_card_ids = data.get('sacrificed_card_ids', [])
+    
+    if not pid or not player or not ritual_id:
+        return
+
+    ritual = game_state.active_rituals.get(ritual_id)
+    if not ritual:
+        emit('error', {"message": "This ritual is no longer active."}, room=sid)
+        return
+        
+    assistant = ritual['assistants'].get(pid)
+    if not assistant or assistant['responded']:
+        emit('error', {"message": "You are not part of this ritual or have already responded."}, room=sid)
+        return
+
+    print(f"[RITUAL] {player.name} responded to ritual {ritual_id}.")
+    assistant['responded'] = True
+    
+    # Check if they sacrificed or sabotaged
+    if len(sacrificed_card_ids) == 2:
+        # Validate and remove cards
+        cards_to_remove = []
+        for card_id in sacrificed_card_ids:
+            card = player.get_card_by_id(card_id)
+            if card:
+                cards_to_remove.append(card)
+        
+        if len(cards_to_remove) == 2:
+            assistant['sacrificed'] = True
+            assistant['cards'] = [c.to_dict() for c in cards_to_remove] # Log what was lost
+            for card in cards_to_remove:
+                player.remove_card_by_id(card.id)
+            print(f"[RITUAL] {player.name} sacrificed 2 cards.")
+        else:
+            # This shouldn't happen with client-side checks, but good to have
+            print(f"[RITUAL] {player.name} tried to sacrifice invalid cards. Treating as sabotage.")
+            assistant['sacrificed'] = False
+    else:
+        print(f"[RITUAL] {player.name} sabotaged the ritual.")
+        assistant['sacrificed'] = False
+        
+    emit('action_confirmed', {"message": "Your choice has been recorded."}, room=sid)
+    resolve_ritual(ritual_id) # Check if the ritual is complete
+    broadcast_game_state()
+# --- END OF NEW FUNCTION ---
+
+def resolve_ritual(ritual_id):
+    """
+    Checks if a ritual is complete and resolves its effects.
+    This is called every time an assistant responds.
+    """
+    ritual = game_state.active_rituals.get(ritual_id)
+    if not ritual:
+        return # Ritual already resolved or doesn't exist
+
+    # Check if all assistants have responded
+    all_responded = all(a['responded'] for a in ritual['assistants'].values())
+    if not all_responded:
+        print(f"[RITUAL] Ritual {ritual_id} is still waiting for responses.")
+        return # Not done yet
+
+    print(f"[RITUAL] All assistants have responded to ritual {ritual_id}. Resolving...")
+    
+    # Check for success (ALL assistants must have sacrificed)
+    is_success = all(a['sacrificed'] for a in ritual['assistants'].values())
+    
+    caster = game_state.get_player(ritual['caster_id'])
+    target = game_state.get_player(ritual['target_id'])
+    
+    if is_success and target and not target.is_alive:
+        # --- SUCCESS ---
+        game_state.public_announcements.append(f"The resurrection ritual was successful! {target.name} has returned from the dead!")
+        print(f"[RITUAL] {target.name} has been resurrected.")
+        increment_contract_avoid(target_player.player_id)
+        
+        # Resurrect the player
+        target.is_alive = True
+        if target.player_id in game_state.dead_players:
+            game_state.dead_players.remove(target.player_id)
+        if target.player_id not in game_state.alive_players:
+            game_state.alive_players.append(target.player_id)
+            
+        # Clear their hand and deal a new one (as per your rules)
+        target.hand.clear()
+        new_cards = game_state.deck.deal(INITIAL_HAND_SIZE)
+        for card in new_cards:
+            target.add_card(card)
+        
+    else:
+        # --- FAILURE ---
+        sabotagers = [a['name'] for a in ritual['assistants'].values() if not a['sacrificed']]
+        if not target:
+            print(f"[RITUAL] Ritual failed because target {ritual['target_name']} no longer exists.")
+            game_state.public_announcements.append(f"The resurrection ritual for {ritual['target_name']} failed as the soul had already departed.")
+        elif target.is_alive:
+            print(f"[RITUAL] Ritual failed because {target.name} is already alive.")
+            game_state.public_announcements.append(f"The resurrection ritual for {target.name} failed as they are already among the living!")
+        else:
+            print(f"[RITUAL] Ritual failed due to sabotage by: {', '.join(sabotagers)}")
+            game_state.public_announcements.append(f"The resurrection ritual for {target.name} was sabotaged, causing all sacrificed cards to be lost!")
+
+    # The ritual is over. Clean it up.
+    del game_state.active_rituals[ritual_id]
+    
+    # Broadcast state to show the resurrected player (or just card count changes)
+    broadcast_game_state()
+# --- END OF NEW FUNCTION ---
+
 
 # --- ADD THIS NEW FUNCTION BELOW ---
 @socketio.on('reset_game_request')
@@ -775,6 +944,205 @@ def handle_reset_game_request(data=None):
          broadcast=True)
 # --- END OF NEW FUNCTION ---
 
+@socketio.on('contract_response')
+def handle_contract_response(data):
+    """Handles a player accepting or rejecting a contract."""
+    sid = request.sid
+    pid = clients.get(sid)
+    player = game_state.get_player(pid)
+    
+    if not player or player.contract: # Don't let them submit twice
+        return
+        
+    contract_key = data.get('contract_key')
+    accepted = data.get('accepted', False)
+    target_name = data.get('target_player_name')
+    
+    if not contract_key or contract_key not in CONTRACT_DEFINITIONS:
+        emit('error', {"message": "Invalid contract key."}, room=sid)
+        return
+        
+    if accepted and player.role == "Villager":
+        # --- START OF FIX: Handle different contract types ---
+        contract_def = CONTRACT_DEFINITIONS.get(contract_key)
+        
+        if contract_def.get('target_type') == 'self':
+            # This is a self-target contract (Lamb of God, Thick Skinned)
+            player.contract = {
+                'key': contract_key,
+                'status': 'active',
+            }
+            # Add specific trackers for each 'self' contract
+            if contract_key == 'lamb_of_god':
+                player.contract['failed'] = False
+            elif contract_key == 'thick_skinned':
+                player.contract['avoid_count'] = 0
+            print(f"[CONTRACT] {player.name} accepted '{contract_key}'.")
+            emit('action_confirmed', {"message": f"You have accepted the contract '{contract_def.get('name')}'."}, room=sid)
+
+        else: # Default to 'other' target (Brother's Keeper)
+            target_player = game_state.get_player_by_name(target_name)
+            if not target_player or not target_player.is_alive or target_player.player_id == pid:
+                emit('error', {"message": "Invalid target for this contract."}, room=sid)
+                return
+
+            player.contract = {
+                'key': contract_key,
+                'target_id': target_player.player_id,
+                'target_name': target_player.name,
+                'status': 'active'
+            }
+            print(f"[CONTRACT] {player.name} accepted '{contract_key}', targeting {target_name}.")
+            emit('action_confirmed', {"message": f"You have accepted the contract to protect {target_name}."}, room=sid)
+        # --- END OF FIX ---
+        
+    elif not accepted:
+        player.contract = {
+            'key': contract_key,
+            'status': 'rejected'
+        }
+        print(f"[CONTRACT] {player.name} rejected '{contract_key}'.")
+        emit('action_confirmed', {"message": "You have rejected the contract."}, room=sid)
+    
+    else: # Cultist tried to accept
+        player.contract = {
+            'key': contract_key,
+            'status': 'rejected' # Force reject
+        }
+        print(f"[CONTRACT] Cultist {player.name} tried to accept '{contract_key}', was auto-rejected.")
+        emit('action_confirmed', {"message": "The contract crumbles to dust. You cannot accept it."}, room=sid)
+
+# --- START: New Contract Helper ---
+def increment_contract_avoid(player_id):
+    """Finds a player and increments their 'thick_skinned' avoid_count."""
+    player = game_state.get_player(player_id)
+    if (player and player.contract and
+        player.contract.get('key') == 'thick_skinned'):
+        
+        # Initialize count if it doesn't exist
+        if 'avoid_count' not in player.contract:
+            player.contract['avoid_count'] = 0
+            
+        player.contract['avoid_count'] += 1
+        count = player.contract['avoid_count']
+        print(f"[CONTRACT] {player.name} incremented 'Thick Skinned' avoid count to {count}.")
+# --- END: New Contract Helper ---
+
+def resolve_game_end_contracts(winner_role):
+    """
+    Called at game over. Resolves all contracts and calculates scores.
+    """
+    print(f"[GAME_END] Resolving contracts and scores. Winner: {winner_role}")
+    # --- START OF TWEAK ---
+    # We will now store a dictionary to hold the score breakdown
+    game_state.game_scores = {} # This will store {name: {'team': 0, 'contract': 0, 'total': 0}}
+    # --- END OF TWEAK ---
+    
+    game_state.public_announcements.append("--- CONTRACTS RESOLVED ---")
+    
+    for p in game_state.players.values():
+        if not p or not p.name: # Skip if player data is incomplete
+            continue
+
+        # --- START OF TWEAK ---
+        score_details = {'team': 0, 'contract': 0, 'total': 0}
+        # --- END OF TWEAK ---
+        
+        # 1. Add base team win points
+        if p.role == winner_role:
+            # --- START OF TWEAK ---
+            score_details['team'] = 2
+            # --- END OF TWEAK ---
+            
+        # 2. Resolve contract
+        if not p.contract:
+            # Player had no contract (e.g. disconnected, or logic error)
+            # --- START OF TWEAK ---
+            score_details['total'] = score_details['team'] + score_details['contract']
+            game_state.game_scores[p.name] = score_details
+            # --- END OF TWEAK ---
+            continue 
+        
+        contract = p.contract
+        key = contract.get('key')
+        status = contract.get('status')
+        contract_name = CONTRACT_DEFINITIONS.get(key, {}).get('name', 'Unknown Contract')
+        
+        announcement = ""
+        # --- START OF TWEAK ---
+        # We set score_change directly into the dictionary
+        # --- END OF TWEAK ---
+        
+        if status == 'rejected':
+            announcement = f"{p.name} did not sign their contract, '{contract_name}'."
+            # score_change remains 0
+            
+        elif status == 'active' and key == 'brothers_keeper':
+            target_id = contract.get('target_id')
+            target_name = contract.get('target_name', 'Unknown')
+            target_player = game_state.get_player(target_id)
+            
+            if target_player and target_player.is_alive:
+                announcement = f"{p.name} signed '{contract_name}' and successfully protected {target_name}."
+                score_details['contract'] = 1
+            else:
+                announcement = f"{p.name} signed '{contract_name}' but failed to protect {target_name}."
+                score_details['contract'] = -1
+        
+        # --- START: Lamb of God Resolution ---
+        elif status == 'active' and key == 'lamb_of_god': # <--- UN-INDENTED
+            if contract.get('failed'):
+                announcement = f"{p.name} signed '{contract_name}' but failed to remain peaceful."
+                score_details['contract'] = -1
+            else:
+                announcement = f"{p.name} signed '{contract_name}' and successfully remained peaceful."
+                score_details['contract'] = 1
+        # --- END: Lamb of God Resolution ---
+
+        # --- START: Thick Skinned Resolution ---
+        elif status == 'active' and key == 'thick_skinned': # <--- UN-INDENTED
+            avoid_count = contract.get('avoid_count', 0)
+            if avoid_count >= 2:
+                announcement = f"{p.name} signed '{contract_name}' and successfully avoided death {avoid_count} time(s)."
+                score_details['contract'] = 1
+            else:
+                announcement = f"{p.name} signed '{contract_name}' but only avoided death {avoid_count} time(s) and failed."
+                score_details['contract'] = -1
+        # --- END: Thick Skinned Resolution ---
+                
+        if announcement:
+            game_state.public_announcements.append(announcement)
+            print(f"[CONTRACT] {announcement}")
+            
+        # --- START OF TWEAK ---
+        # Apply score changes and store the whole dictionary
+        score_details['total'] = score_details['team'] + score_details['contract']
+        game_state.game_scores[p.name] = score_details
+        # --- END OF TWEAK ---
+
+    # 3. Add final score summary
+    game_state.public_announcements.append("--- FINAL SCORES ---")
+    print("[GAME_END] Final Scores:")
+    # --- START OF TWEAK ---
+    # Sort scores descending by the 'total' value in the dictionary
+    sorted_scores = sorted(game_state.game_scores.items(), key=lambda item: item[1]['total'], reverse=True)
+    
+    for name, scores in sorted_scores:
+        # Build the detailed string
+        team_str = f"+2 (Team Win)" if scores['team'] == 2 else "+0 (Team Loss)"
+        
+        contract_str = "+0 (Contract)"
+        if scores['contract'] == 1:
+            contract_str = "+1 (Contract)"
+        elif scores['contract'] == -1:
+            contract_str = "-1 (Contract)"
+            
+        total_str = f"Total: {scores['total']} points"
+        
+        summary_line = f"{name}: {team_str}, {contract_str} = {total_str}"
+        game_state.public_announcements.append(summary_line)
+        print(f"  {summary_line}")
+    # --- END OF TWEAK ---
 # --- Game Logic Helpers ---
 
 def assign_roles():
@@ -842,6 +1210,18 @@ def start_game_logic():
         pl = game_state.get_player(pid)
         objective = ("Objective: Find and eliminate all of the Cultists." if pl.role == "Villager" else "Objective: Kill the Villagers. Ensure the Cultists outnumber the Villagers.")
         socketio.emit('reveal_role', {"role": pl.role, "objective": objective}, room=sid)
+        # --- NEW CONTRACT LOGIC ---
+        # Randomly select a contract to offer
+        available_contracts = ["brothers_keeper", "lamb_of_god", "thick_skinned"]
+        contract_key = random.choice(available_contracts)
+        contract_data = CONTRACT_DEFINITIONS[contract_key].copy() # Get a copy
+        contract_data['key'] = contract_key
+        # Add the target_type so the UI knows how to display it
+        contract_data['target_type'] = CONTRACT_DEFINITIONS[contract_key].get('target_type', 'other') 
+        
+        # Send the contract prompt *after* the role reveal
+        socketio.emit('prompt_for_contract', contract_data, room=sid)
+        print(f"[CONTRACT] Sending '{contract_key}' to {pl.name}.")
 
 def check_night_sleep_progress():
     """After everyone sleeps, run special night quests then wake Cultists."""
@@ -891,6 +1271,41 @@ def wake_cultists_for_kill_vote():
             socketio.emit('sleep_prompt', {"message": "Stay asleep."}, room=sid)
     broadcast_game_state()
 
+def execute_doppelganger_transform(action):
+    """
+    Executes the role and hand swap for a Doppelgänger.
+    This is called instantly when their target dies.
+    """
+    dop_player = game_state.get_player(action['doppelganger_id'])
+    if dop_player and dop_player.is_alive:
+        old_role = dop_player.role
+        new_role = action['new_role']
+        target_name = action['target_name']
+        
+        print(f"[DOPPELGANGER] Executing {dop_player.name}'s transformation from {old_role} to {new_role}.")
+        
+        # 1. Change Role
+        dop_player.role = new_role
+        
+        # 2. Swap Hand
+        dop_player.hand.clear()
+        # We need to import Card from card_game at the top, but it's already there
+        new_hand_cards = [Card.from_dict(c_data) for c_data in action['new_hand']]
+        for card in new_hand_cards:
+            dop_player.add_card(card)
+            
+        # 3. Send private "Role Reveal" popup
+        sid = next((s for s, p_id in clients.items() if p_id == dop_player.player_id), None)
+        if sid:
+            objective = ("Objective: Find and eliminate all of the Cultists." if new_role == "Villager" else "Objective: Kill the Villagers. Ensure the Cultists outnumber the Villagers.")
+            socketio.emit('reveal_role', {
+                "role": new_role, 
+                "objective": f"You have taken {target_name}'s role! {objective}"
+            }, room=sid)
+        
+        # 4. Add subtle public announcement
+        game_state.public_announcements.append(f"{dop_player.name} seems... different this morning. Perhaps a Doppelgänger walks among you!") 
+# --- END OF NEW FUNCTION ---
 
 def check_cultist_kill_consensus():
     """Checks if all living cultists have voted for the same target."""
@@ -907,10 +1322,21 @@ def check_cultist_kill_consensus():
     else:
         game_state.cultist_kill_target = None
 
-def apply_card_effect(player_id, card_obj, target_list=None):
+def apply_card_effect(player_id, card_obj, target_list=None, sid=None):
     """Applies the effect of a played card."""
     player = game_state.get_player(player_id)
-    t1_name = target_list[0] if target_list else None
+
+    # --- START: Lamb of God Failure Check (REMOVED) ---
+    # We no longer check for failure when the card is *played*.
+    # We check at the *consequence* (burning or Carnage).
+    # --- END: Lamb of God Failure Check (REMOVED) ---
+
+    # We must check if target_list is a list before trying to access it by index,
+    # because 'Resurrection Ritual' sends a dictionary instead.
+    t1_name = None
+    if target_list and isinstance(target_list, list):
+        t1_name = target_list[0]
+    # --- END OF FIX ---
     t1_obj = game_state.get_player_by_name(t1_name) if t1_name else None
 
     if t1_obj and 'immolated' in t1_obj.status_effects and player_id != t1_obj.player_id:
@@ -922,6 +1348,17 @@ def apply_card_effect(player_id, card_obj, target_list=None):
             game_state.public_announcements.append(f"{player.name} caught fire! They will die in two rounds unless saved.")
             print(f"[EFFECT] {player.name} caught fire from attacking {t1_obj.name}.")
             # --- END OF FIX ---
+            
+            # --- START: NEW Lamb of God (Immolation) Failure Check ---
+            # Check if the IMMOLATED player (t1_obj) has the contract.
+            immolated_player = t1_obj # t1_obj is the one with the 'immolated' effect
+            if (immolated_player.contract and 
+                immolated_player.contract.get('key') == 'lamb_of_god' and 
+                not immolated_player.contract.get('failed')):
+                
+                immolated_player.contract['failed'] = True
+                print(f"[CONTRACT] {immolated_player.name} failed 'Lamb of God' by burning {player.name} with Immolation.")
+            # --- END: NEW Lamb of God (Immolation) Failure Check ---
 
     print(f"[CARD_EFFECT] {player.name} playing {card_obj.name} with effect {card_obj.effect_type}")
     #... rest of the function continues    if target_list: print(f"[CARD_EFFECT] Targets: {target_list}")
@@ -947,6 +1384,7 @@ def apply_card_effect(player_id, card_obj, target_list=None):
             compelled_id = random.choice(living_cultist_ids)
             compelled_player = game_state.get_player(compelled_id)
             compelled_player.apply_status_effect("compelled", {
+                "caster_id": player_id,
                 "initiated_at_round": game_state.round_number,
                 "resolve_at_round": game_state.round_number + 1
             })
@@ -984,6 +1422,10 @@ def apply_card_effect(player_id, card_obj, target_list=None):
     elif card_obj.effect_type == "apocalypse_vote":
         if t1_obj and t1_obj.is_alive:
             game_state.apocalypse_vote_target = t1_obj.player_id
+            # --- START: Lamb of God (Apocalypse) Tweak ---
+            # Store the ID of the player who cast this
+            game_state.global_status_effects['apocalypse_caster_id'] = player_id
+            # --- END: Lamb of God (Apocalypse) Tweak ---
             game_state.public_announcements.append(f"{player.name} played The Apocalypse! All players must now vote on whether to reveal {t1_obj.name}'s role.")
     elif card_obj.effect_type == "delirium":
         if t1_obj:
@@ -1099,6 +1541,11 @@ def apply_card_effect(player_id, card_obj, target_list=None):
         print(f"[QUEST] {player.name} started Violent Delights quest, expires at round {quest_data['expires_at_round']}.")
     elif card_obj.effect_type == "i_saw_the_light":
         if t1_obj:
+            # --- START: Thick Skinned Check ---
+            # Check *before* cleansing if the player is burning
+            was_burning = 'burning' in t1_obj.status_effects
+            # --- END: Thick Skinned Check ---
+
             effects_to_cleanse = ['silence', 'delirium', 'burning', 'vote_restriction', 'violent_delights_quest']
             cleansed_an_effect = False
 
@@ -1107,6 +1554,12 @@ def apply_card_effect(player_id, card_obj, target_list=None):
                     t1_obj.status_effects.pop(effect, None)
                     cleansed_an_effect = True
                     print(f"[EFFECT] Cleansed {effect} from {t1_obj.name}")
+
+            # --- START: Thick Skinned Increment ---
+            # If they *were* burning and we cleansed *something* (which must include burning)
+            if was_burning and cleansed_an_effect:
+                increment_contract_avoid(t1_obj.player_id)
+            # --- END: Thick Skinned Increment ---
 
             if 'burning' in effects_to_cleanse and cleansed_an_effect:
                 game_state.delayed_actions = [
@@ -1148,6 +1601,24 @@ def apply_card_effect(player_id, card_obj, target_list=None):
 
         game_state.public_announcements.append(f"{player.name} was resurrected by the Dark God to participate in voting for one more round, but cannot speak or play any cards.")
         print(f"[CARD] {player.name} played Lazarus and is temporarily resurrected.")
+    # --- START OF NEW DOPPELGANGER BLOCK ---
+    elif card_obj.effect_type == "doppelganger":
+        if t1_obj and t1_obj.is_alive:
+            # This handles the "most recent target" logic by simply overwriting
+            player.apply_status_effect('doppelganger_pending', {
+                'target_id': t1_obj.player_id,
+                'target_name': t1_obj.name
+            })
+            game_state.public_announcements.append(f"{player.name} has cast a dark ritual on {t1_obj.name}...")
+            print(f"[DOPPELGANGER] {player.name} played Doppelgänger, targeting {t1_obj.name}.")
+        else:
+            # Safely send an error message if we can
+            if sid:
+                socketio.emit('error', {"message": "Invalid target for Doppelgänger."}, room=sid)
+            # Return the card if the target was invalid
+            player.add_card(card_obj)
+            return # Must return to stop card from being consumed
+    # --- END OF NEW DOPPELGANGER BLOCK ---
     elif card_obj.effect_type == "harbinger_of_doom":
         quest_data = {
             'execute_at_round': game_state.round_number + 3
@@ -1156,6 +1627,73 @@ def apply_card_effect(player_id, card_obj, target_list=None):
         game_state.global_status_effects["harbinger_quest"] = True
         game_state.public_announcements.append(f"{player.name} has performed a dark ritual, becoming a Harbinger of Doom! In three rounds, they will choose a victim to be sacrificed.")
         print(f"[QUEST] {player.name} started Harbinger of Doom. Kill will be available in round {quest_data['execute_at_round']}.")
+    # --- START OF NEW RITUAL BLOCK ---
+    elif card_obj.effect_type == "resurrection_ritual_start":
+        # The client sends targets in a custom object: {card.id: {'target': 'DeadName', 'assistants': ['Live1', 'Live2', 'Live3']}}
+        targets = target_list
+        target_name = targets.get('target')
+        assistant_names = targets.get('assistants', [])
+
+        # --- 1. Validate all targets ---
+        target_player = game_state.get_player_by_name(target_name)
+        assistants = [game_state.get_player_by_name(name) for name in assistant_names]
+
+        valid = True
+        error_msg = ""
+
+        if not target_player or target_player.is_alive:
+            valid = False
+            error_msg = "You must select one dead player to resurrect."
+        elif len(assistants) != 3 or any(p is None or not p.is_alive for p in assistants):
+            valid = False
+            error_msg = "You must select three different living players to assist."
+        elif player_id in [p.player_id for p in assistants]:
+            valid = False
+            error_msg = "You cannot select yourself as an assistant."
+        elif target_player.player_id in [p.player_id for p in assistants]:
+            valid = False
+            error_msg = "The dead player cannot be an assistant."
+
+        if not valid:
+            if sid:
+                socketio.emit('error', {"message": error_msg}, room=sid)
+            player.add_card(card_obj) # Return the caster's card
+            # Caster's sacrifice card is returned by the 'handle_submit_evening_cards' logic
+            return
+            
+        # --- 2. All targets are valid, start the ritual ---
+        ritual_id = f"ritual_{uuid.uuid4()}"
+        ritual = {
+            'caster_id': player_id,
+            'caster_name': player.name,
+            'target_id': target_player.player_id,
+            'target_name': target_player.name,
+            'assistants': {}
+        }
+        
+        assistant_names_str = []
+        for p in assistants:
+            ritual['assistants'][p.player_id] = {'name': p.name, 'responded': False, 'sacrificed': False, 'cards': []}
+            assistant_names_str.append(p.name)
+
+        game_state.active_rituals[ritual_id] = ritual
+        
+        # --- 3. Send prompts ---
+        game_state.public_announcements.append(f"{player.name} is using black magic to resurrect {target_player.name}! This will require sacrifices from {', '.join(assistant_names_str)}.")
+        print(f"[RITUAL] {player.name} started ritual {ritual_id} to resurrect {target_player.name}.")
+        
+        prompt_data = {
+            'ritual_id': ritual_id,
+            'caster_name': player.name,
+            'target_name': target_player.name
+        }
+        
+        for p_id in ritual['assistants']:
+            assistant_sid = next((s for s, pid in clients.items() if pid == p_id), None)
+            if assistant_sid:
+                socketio.emit('prompt_resurrection_assist', prompt_data, room=assistant_sid)
+                print(f"[RITUAL] Sent assist prompt to {ritual['assistants'][p_id]['name']}.")
+    # --- END OF NEW RITUAL BLOCK ---
 
 
 def resolve_dawn_actions():
@@ -1173,6 +1711,7 @@ def resolve_dawn_actions():
                     # Remove the effect so it's one-time use
                     target_player.status_effects.pop("hand_of_glory_protection", None)
                     print(f"[EFFECT] {target_player.name} was saved by Hand of Glory.")
+                    increment_contract_avoid(target_player.player_id)
                 elif "protected" in target_player.status_effects or "divine_protection" in target_player.status_effects:
                     game_state.public_announcements.append(f"{target_player.name} was protected from death!")
                 else:
@@ -1264,10 +1803,21 @@ def resolve_dawn_actions():
         else:
             game_state.public_announcements.append(f"{target_player.name} countered a {action['effect_type']} attempt!")
     game_state.pending_night_actions.clear()
+
 def kill_player(player_id, source, killers=[]):
     """Kills a player and handles Mark of the Beast."""
     pl = game_state.get_player(player_id)
     if pl and pl.is_alive:
+        # --- START OF FIX ---
+        # Log the death *before* changing any player state
+        death_record = {
+            'name': pl.name,
+            'role': pl.role,
+            'source': source,
+            'round': game_state.round_number
+        }
+        game_state.death_log.append(death_record)
+        # --- END OF FIX ---
         if 'mark_of_the_beast' in pl.status_effects:
             killer_names = [game_state.players[kid].name for kid in killers if kid in game_state.players]
             if killer_names:
@@ -1289,7 +1839,37 @@ def kill_player(player_id, source, killers=[]):
             game_state.public_announcements.append("Their death caused the ritual for Harbinger of Doom to be interrupted.")
             print(f"[QUEST] {pl.name}'s death interrupted their Harbinger of Doom quest.")
         # --- END OF FIX ---
+                # --- START: NEW DOPPELGANGER LOGIC ---
 
+        # 1. TRIGGER: Check if any living player was targeting this dying player
+        # We must snapshot the hand *before* it's cleared
+        target_hand_snapshot = [card.to_dict() for card in pl.hand] 
+        
+        for p in game_state.players.values():
+            if p.is_alive and p.player_id != player_id and 'doppelganger_pending' in p.status_effects:
+                if p.status_effects['doppelganger_pending'].get('target_id') == player_id:
+                    print(f"[DOPPELGANGER] {pl.name}'s death triggers {p.name}'s transformation.")
+                    # --- START OF FIX ---
+                    # Instead of delaying, build the action and execute it NOW.
+                    action = {
+                        'type': 'doppelganger_transform',
+                        'doppelganger_id': p.player_id,
+                        'target_name': pl.name,
+                        'new_role': pl.role,
+                        'new_hand': target_hand_snapshot
+                    }
+                    execute_doppelganger_transform(action)
+                    # --- END OF FIX ---
+                    # Effect is consumed
+                    p.status_effects.pop('doppelganger_pending', None)
+
+        # 2. CANCEL: Check if the dying player *was* the one with the pending effect
+        if 'doppelganger_pending' in pl.status_effects:
+            target_name = pl.status_effects['doppelganger_pending'].get('target_name', 'Unknown')
+            print(f"[DOPPELGANGER] {pl.name} died, cancelling their pending effect on {target_name}.")
+            pl.status_effects.pop('doppelganger_pending', None)
+        
+        # --- END: NEW DOPPELGANGER LOGIC ---
         cards_to_keep = [card for card in pl.hand if card.name in ["Feed the Maggots", "Lazarus"]]
         pl.hand.clear()
         for card in cards_to_keep:
@@ -1297,31 +1877,61 @@ def kill_player(player_id, source, killers=[]):
 
         pl.is_alive = False
         if player_id in game_state.alive_players: game_state.alive_players.remove(player_id)
-        game_state.dead_players.append(player_id)
+        
+        # --- START OF LAZARUS FIX (PART 1) ---
+        # Only add to dead_players list if they aren't already in it (from Lazarus)
+        if player_id not in game_state.dead_players: 
+            game_state.dead_players.append(player_id)
 
-        print(f"[HAND_DEBUG] Dealing 3 dead cards to {pl.name} ({pl.player_id}).")
-        newly_dealt_cards = game_state.dead_deck.deal(3)
-        for c in newly_dealt_cards:
-            pl.add_card(c)
-        card_ids_in_hand = [card.id for card in pl.hand]
-        print(f"[HAND_DEBUG] {pl.name}'s server-side hand now contains cards with these IDs: {card_ids_in_hand}")
-
-        over, _ = game_state.is_game_over()
-        if over: game_state.current_phase = "GameOver"; broadcast_game_state()
+        # Only deal dead cards if this isn't a Lazarus re-death
+        if source != "Lazarus":
+            print(f"[HAND_DEBUG] Dealing 3 dead cards to {pl.name} ({pl.player_id}).")
+            newly_dealt_cards = game_state.dead_deck.deal(3)
+            for c in newly_dealt_cards:
+                pl.add_card(c)
+            card_ids_in_hand = [card.id for card in pl.hand]
+            print(f"[HAND_DEBUG] {pl.name}'s server-side hand now contains cards with these IDs: {card_ids_in_hand}")
+        # --- END OF LAZARUS FIX (PART 1) ---
+        
+        # --- START OF NAMEERROR FIX ---
+        over, winner = game_state.is_game_over() # Changed '_' to 'winner'
+        if over: 
+            resolve_game_end_contracts(winner) # Now 'winner' is defined
+            game_state.current_phase = "GameOver"
+            broadcast_game_state()
+        # --- END OF NAMEERROR FIX ---
 
 def resolve_apocalypse_vote():
-    """Resolves the vote for The Apocalypse, reveals role or triggers Carnage."""
+    """ResolVes the vote for The Apocalypse, reveals role or triggers Carnage."""
     if not game_state.apocalypse_vote_target: return
     target_player = game_state.get_player(game_state.apocalypse_vote_target)
     votes = game_state.apocalypse_votes.values()
     yes_votes = sum(1 for v in votes if v == 'Yes')
     no_votes = len(votes) - yes_votes
     announcement_message = ""
+    
+    # --- START: Lamb of God (Apocalypse) Tweak ---
+    # Get and clear the caster's ID from when the card was played
+    caster_id = game_state.global_status_effects.pop('apocalypse_caster_id', None)
+    # --- END: Lamb of God (Apocalypse) Tweak ---
+
     if yes_votes > no_votes:
         announcement_message = f"The vote succeeded! {target_player.name}'s role has been revealed: they are a {target_player.role}!"
     else:
         announcement_message = f"The vote failed! Carnage will now start, allowing the Cultists to kill two players tonight!"
         game_state.global_status_effects["Carnage"] = True
+        
+        # --- START: Lamb of God (Apocalypse) Failure Check ---
+        if caster_id:
+            caster_player = game_state.get_player(caster_id)
+            if (caster_player and caster_player.contract and
+                caster_player.contract.get('key') == 'lamb_of_god' and 
+                not caster_player.contract.get('failed')):
+                
+                caster_player.contract['failed'] = True
+                print(f"[CONTRACT] {caster_player.name} failed 'Lamb of God' by triggering Carnage.")
+        # --- END: Lamb of God (Apocalypse) Failure Check ---
+
     game_state.apocalypse_vote_target = None; game_state.apocalypse_votes.clear(); game_state.advance_phase()
     if announcement_message: game_state.public_announcements.append(announcement_message)
 
@@ -1421,6 +2031,15 @@ def resolve_execution_vote():
         executed_player = game_state.get_player(executed_id)
         executed_name = executed_player.name
 
+        # --- START: Lamb of God Failure Check ---
+        voters_who_killed = voters_for_target.get(executed_id, [])
+        for voter_id in voters_who_killed:
+            voter_player = game_state.get_player(voter_id)
+            if voter_player and voter_player.contract and voter_player.contract.get('key') == 'lamb_of_god' and not voter_player.contract.get('failed'):
+                voter_player.contract['failed'] = True
+                print(f"[CONTRACT] {voter_player.name} failed 'Lamb of God' by voting to execute {executed_name}.")
+        # --- END: Lamb of God Failure Check ---
+
         if 'divine_protection' in executed_player.status_effects:
             executed_player.status_effects.pop('divine_protection', None)
             game_state.public_announcements.append(f"{executed_name} was voted to die, but by the grace of the Light, they were saved!")
@@ -1438,6 +2057,14 @@ def resolve_execution_vote():
             game_state.public_announcements.append(f"By popular vote, {executed_name} has been executed!")
             print(f"[VOTE] {executed_name} is executed.")
             kill_player(executed_id, "Execution", killers)
+            # --- ADD GAME OVER CHECK HERE TOO ---
+            over, winner = game_state.is_game_over()
+            if over:
+                # kill_player already called resolve_game_end_contracts
+                # so we just need to stop the game
+                game_state.current_phase = "GameOver"
+                broadcast_game_state()
+            # --- END OF ADDITION ---
     
     # --- START of Vote Totals Edit ---
     print("[VOTE_DEBUG] --- Execution Vote Summary ---")
