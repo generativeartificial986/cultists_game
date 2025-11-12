@@ -244,9 +244,130 @@
         animation: warm-flicker 1.8s infinite ease-in-out;
     }
     /* --- END: ADD NEW CSS FOR HAND OF GLORY --- */
+    /* --- START: NEW TOOLTIP STYLES --- */
+    
+    /* 1. This is the container that holds the stack of tooltips */
+    #status-tooltip-container {
+      display: none; /* Hidden by default */
+      position: absolute; 
+      z-index: 2000;
+      pointer-events: none; /* Prevents tooltip from blocking mouseup */
+      
+      /* Stacks the mini-banners vertically */
+      display: flex;
+      flex-direction: column;
+      gap: 4px; /* Adds a small space between banners */
+    }
+    
+    /* 2. This is the base style for each individual mini-banner */
+    .status-tooltip-item {
+      padding: 0.25rem 0.75rem; /* p-1 px-3 */
+      border-radius: 0.25rem; /* rounded-sm */
+      font-family: 'Special Elite', monospace;
+      font-size: 0.8rem; /* A bit smaller */
+      font-weight: bold;
+      text-transform: uppercase;
+      white-space: nowrap;
+      border: 2px solid transparent; /* default border */
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      text-align: center;
+    }
+
+    /* 3. We copy ALL your existing banner keyframes and classes */
+    
+    /* Copied from .burning */
+    /* (Keyframes 'flicker' are already defined above) */
+    .burning {
+        border: 2px solid rgba(255, 165, 0, 0.8);
+        background-color: #9A3412;
+        color: #FDE68A;
+        animation: flicker 1s infinite ease-in-out;
+    }
+    
+    /* Copied from .cursed-banner */
+    /* (Keyframes 'shadow-breathe' are already defined above) */
+    .cursed-banner {
+      background: linear-gradient(to top, #1e1b1b, #2e1065);
+      color: #e9d5ff;
+      animation: shadow-breathe 4s infinite ease-in-out;
+    }
+    
+    /* Copied from .hand-of-glory-banner */
+    /* (Keyframes 'warm-flicker' are already defined above) */
+    .hand-of-glory-banner {
+        background-color: #78350f;
+        color: #fef3c7;
+        border: 2px solid #f59e0b;
+        animation: warm-flicker 1.8s infinite ease-in-out;
+    }
+    
+    /* Copied from .snowy-banner */
+    .snowy-banner {
+      background: linear-gradient(to bottom, #0f172a, #1e293b);
+      color: #e0f2fe;
+      border: 2px solid #38bdf8;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
+      text-shadow: 0 0 5px #38bdf8;
+    }
+    
+    /* Copied from .violent-delights-banner */
+    .violent-delights-banner {
+        background-color: #FFFFFF;
+        color: #DC2626;
+        border: 2px solid #DC2626;
+        box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    }
+
+    /* Copied from .halo-effect */
+    /* (Keyframes 'glow' are already defined above) */
+    .halo-effect {
+        border: 2px solid rgba(249, 115, 224, 0.7);
+        background-color: #be185d;
+        color: #fce7f3;
+        animation: glow 2s infinite ease-in-out;
+    }
+    
+    /* Copied from .decaying */
+    /* (Keyframes 'decay' are already defined above) */
+    .decaying {
+        border: 2px solid #4d7c0f;
+        background-color: #1a2e05;
+        color: #d9f99d;
+        animation: decay 0.5s infinite ease-in-out;
+    }
+    
+    /* 4. We add simple styles for effects that don't have banners */
+    @keyframes pulse-simple { 50% { opacity: 0.8; } }
+    
+    .tooltip-harbinger {
+        background: #111827;
+        border-color: #ef4444;
+        color: #fca5a5;
+        animation: pulse-simple 1.5s infinite ease-in-out;
+    }
+    .tooltip-silence {
+        background: #fef08a; /* bg-yellow-500 */
+        border-color: #fef08a; /* border-yellow-300 */
+        color: #422006;
+    }
+    .tooltip-delirium {
+        background: #10b981; /* bg-emerald-500 */
+        border-color: #a7f3d0; /* border-emerald-300 */
+        color: #064e3b;
+    }
+    .tooltip-vote_restriction {
+        background: #ea580c; /* bg-orange-600 */
+        border-color: #fdba74; /* border-orange-400 */
+        color: #431407;
+    }
+    /* --- END: NEW TOOLTIP STYLES --- */
   </style>
 </head>
 <body class="flex flex-col text-sm">
+  <!-- --- START: ADD TOOLTIP CONTAINER --- -->
+  <!-- This is the hidden tooltip element. JS will show/move it. -->
+  <div id="status-tooltip-container"></div>
+  <!-- --- END: ADD TOOLTIP CONTAINER --- -->
 
   <div class="container mx-auto p-4 flex flex-col flex-grow">
 
@@ -337,6 +458,7 @@
     let previousPhase = null;
 
     const STATUS_UI_MAP = {
+        doppelganger_pending: { bannerText: 'DOPPELGÄNGER ACTIVE', bannerClasses: 'cursed-banner', isPrivate: true },
         mark_of_the_beast: { bannerText: 'MARKED BY THE BEAST', bannerClasses: 'cursed-banner', highlightClasses: 'cursed-nameplate', isPrivate: true },
         hand_of_glory_protection: { 
             bannerText: 'HAND OF GLORY ACTIVE', 
@@ -381,12 +503,49 @@
       duskReadyCount = data.dusk_ready_count;
       updateGUI();
     });
-    socket.on('private_player_state', data => { playerHand = data.hand; playerRole = data.role; playerStatusEffects = data.status_effects; playerIsAlive = data.is_alive; playerIsAsleep = data.is_asleep; updateGUI(); });
+    socket.on('private_player_state', data => { 
+        playerHand = data.hand; 
+        playerRole = data.role; 
+        playerStatusEffects = data.status_effects; 
+        playerIsAlive = data.is_alive; 
+        playerIsAsleep = data.is_asleep; 
+
+    // --- START OF FIX ---
+    // The 'if' condition was removed. We *want* this data to update
+    // in the background. The updateGUI() call is now triggered
+    // *after* the contract dialog is closed.
+    // --- END OF FIX ---
+    if (currentPhase !== "Evening" || roundNumber !== 0) {
+        updateGUI();
+    }
+    });
     socket.on('action_confirmed', data => console.log('✔️', data.message));
     socket.on('error', data => { alert(`Error: ${data.message}`); console.error(data.message); });
     socket.on('sleep_prompt', data => { announcementsArea.innerHTML += `<p class="text-yellow-300">${data.message}</p>`; announcementsArea.scrollTop = announcementsArea.scrollHeight; updateGUI(); });
     socket.on('cultist_wake_up', data => { announcementsArea.innerHTML += `<p class="text-red-300 font-bold">${data.message}</p>`; announcementsArea.scrollTop = announcementsArea.scrollHeight; updateGUI(); });
-    socket.on('reveal_role', data => showRoleRevealDialog(data.role, data.objective));
+    // --- START OF TWEAK 1 ---
+    let roleData = null;
+    let contractData = null;
+
+    socket.on('reveal_role', data => {
+        playerRole = data.role; // This is CRITICAL for the contract logic
+        roleData = data;
+        // If contract data already arrived, start the popup chain
+        if (contractData) {
+            showRoleRevealDialog(roleData, contractData);
+        }
+    });
+    
+    socket.on('prompt_for_contract', (data) => {
+        contractData = data;
+        // If role data already arrived, start the popup chain
+        if (roleData) {
+            showRoleRevealDialog(roleData, contractData);
+        }
+    });
+    // --- END OF TWEAK 1 ---
+
+    // --- ADD THIS HANDLER ---
     // --- ADD THIS HANDLER ---
     socket.on('game_has_reset', data => {
         alert(data.message); // Shows "The game was reset by an admin. Reloading..."
@@ -420,6 +579,11 @@
     socket.on('play_tolling_bell', () => {
         playTollingBell();
     });
+    // --- START OF NEW LISTENER ---
+    socket.on('prompt_resurrection_assist', (data) => {
+        showResurrectionAssistDialog(data);
+    });
+    // --- END OF NEW LISTENER ---
     // START: ADD THE NEW, CORRECT LISTENER HERE
     // This targets our new button: 'global-reset-button'
     document.getElementById('global-reset-button').addEventListener('click', () => {
@@ -476,6 +640,108 @@
         bell.triggerAttackRelease("C2", "8n", now + 0.7);
         bell.triggerAttackRelease("C2", "8n", now + 1.4);
     }
+
+    // --- START: NEW TOOLTIP FUNCTIONS ---
+    const tooltipContainer = document.getElementById('status-tooltip-container');
+
+    /**
+     * Maps an effect key (e.g., 'hand_of_glory_protection') to the
+     * correct CSS class for its mini-banner.
+     */
+    function getTooltipClassForEffect(effect) {
+      // Use the STATUS_UI_MAP to find the right class
+      const ui = STATUS_UI_MAP[effect];
+      if (ui && ui.bannerClasses) {
+          // It's a full banner effect, use its classes
+          // We need to return the *first* class that defines the style
+          if (effect === 'doppelganger_pending' || effect === 'mark_of_the_beast') return 'cursed-banner';
+          if (effect === 'hand_of_glory_protection') return 'hand-of-glory-banner';
+          if (effect === 'eternal_winter') return 'snowy-banner';
+          if (effect === 'immolated' || effect === 'burning') return 'burning';
+          if (effect === 'violent_delights_quest') return 'violent-delights-banner';
+          if (effect === 'divine_protection') return 'halo-effect';
+          if (effect === 'lazarus_effect') return 'decaying';
+      }
+
+      // It's a simple effect, map it to a simple tooltip style
+      switch(effect) {
+        case 'harbinger_quest':
+          return 'tooltip-harbinger';
+        case 'silence':
+          return 'tooltip-silence';
+        case 'delirium':
+          return 'tooltip-delirium';
+        case 'vote_restriction':
+          return 'tooltip-vote_restriction';
+        
+        // --- Default Fallback ---
+        default:
+          return 'tooltip-harbinger'; // Default to a noticeable style
+      }
+    }
+
+    /**
+     * Shows the tooltip stack for a given player element
+     */
+    function showTooltip(e) {
+      const target = e.currentTarget; 
+      const effectsString = target.dataset.statusEffects;
+      
+      tooltipContainer.innerHTML = ''; // Clear previous items
+      
+      if (!effectsString) {
+        return; // Do nothing if there are no effects
+      }
+      
+      const effects = effectsString.split(',');
+      
+      // --- Create a new tooltip item for EACH effect ---
+      effects.forEach(effectName => {
+        const effectDiv = document.createElement('div');
+        effectDiv.className = 'status-tooltip-item'; // Base class
+        
+        // Add the specific banner style class
+        const styleClass = getTooltipClassForEffect(effectName);
+        effectDiv.classList.add(styleClass);
+        // --- START OF TWEAK 1 ---
+          let effectText = effectName.replace(/_/g, ' ');
+          if (effectName === 'delirium') {
+              effectText = 'Delirious';
+          }
+          effectDiv.textContent = effectText;
+          // --- END OF TWEAK 1 ---
+        tooltipContainer.appendChild(effectDiv);
+      });
+      
+      // Now, position the container
+      const targetRect = target.getBoundingClientRect();
+      tooltipContainer.style.display = 'flex'; // Use flex to show it
+      
+      // Get dimensions *after* it's visible
+      const containerRect = tooltipContainer.getBoundingClientRect();
+      const panelRect = playerListArea.getBoundingClientRect();
+
+      // Position: 10px to the LEFT of the player list panel,
+      // aligned vertically with the player name.
+      tooltipContainer.style.top = (targetRect.top + window.scrollY) + 'px';
+      tooltipContainer.style.left = (panelRect.left - containerRect.width - 10) + 'px';
+    }
+
+    /**
+     * Hides the tooltip container
+     */
+    function hideTooltip() {
+      tooltipContainer.style.display = 'none';
+      tooltipContainer.innerHTML = ''; // Clear items
+    }
+
+    // Special wrapper for touch to prevent scrolling
+    function showTooltipTouch(e) {
+      e.preventDefault();
+      showTooltip(e);
+    }
+    // --- END: NEW TOOLTIP FUNCTIONS ---
+
 
     function updateGUI(){
       effectBannersContainer.innerHTML = '';
@@ -603,7 +869,42 @@
             if (currentPhase === 'Lobby' && lobbyReadyPlayers.includes(p.player_id)) {
                 classes.push('border-2', 'border-green-400');
             }
+            // --- START OF TOOLTIP IMPLEMENTATION ---
+            
+            // 1. Determine which effects to show
+            // Use playerStatusEffects for my player, p.status_effects for others
+            const effectsSource = (p.player_id === playerId) ? playerStatusEffects : p.status_effects;
+            let effectsList = [];
+            for (const effectKey in effectsSource) {
+                const ui = STATUS_UI_MAP[effectKey];
+                
+                // Only add if it's a known, visible effect
+                if (ui && (ui.bannerText || ui.highlightClasses)) {
+                    // If it's me, show all my effects (public and private)
+                    if (p.player_id === playerId) {
+                        effectsList.push(effectKey);
+                    } 
+                    // If it's someone else, only show public effects
+                    else if (!ui.isPrivate) {
+                        effectsList.push(effectKey);
+                    }
+                }
+            }
 
+            // 2. If there are effects, add the data and event listeners
+            if (effectsList.length > 0) {
+                pe.dataset.statusEffects = effectsList.join(',');
+                
+                // Add event listeners for mouse
+                pe.addEventListener('mousedown', showTooltip);
+                pe.addEventListener('mouseup', hideTooltip);
+                pe.addEventListener('mouseleave', hideTooltip);
+                
+                // Add event listeners for touch
+                pe.addEventListener('touchstart', showTooltipTouch, { passive: false }); // passive:false to allow preventDefault
+                pe.addEventListener('touchend', hideTooltip);
+            }
+            // --- END OF TOOLTIP IMPLEMENTATION ---
             pe.className = classes.join(' ');
             let content = p.name;
             
@@ -817,9 +1118,8 @@ function updateActionButton(){
       dialogContent.appendChild(dialogBody);
       const closeBtn = document.createElement('button');
       closeBtn.textContent = 'Close';
-      closeBtn.className = 'action-button mt-4 bg-red-600 hover:bg-red-700';
+      closeBtn.className = 'action-button mt-4 bg-red-600 hover:bg-red-700 text-white'; // <-- ADDED 'text-white'
       closeBtn.onclick = () => overlay.remove();
-      dialogContent.appendChild(closeBtn);
       return {overlay, dialogContent, dialogBody, closeButton: closeBtn};
     }
 
@@ -866,39 +1166,190 @@ function updateActionButton(){
       input.focus();
     }
 
-    function showRoleRevealDialog(role, objective){
+    function showRoleRevealDialog(role_data, contract_data){
+        // --- START OF FIX ---
+        // This line was missing. It creates the actual dialog.
         const { overlay, dialogContent, dialogBody, closeButton } = createDialog("Your Role & Objective");
+        // --- END OF FIX ---
+
         closeButton.remove();
-        dialogBody.innerHTML = `<p class="text-xl font-bold mb-2">Role: <span class="${role==='Cultist'?'text-red-400':'text-blue-400'}">${role}</span></p><p class="mb-4">${objective}</p>`;
+        // --- TWEAK 2A: Use role_data ---
+        dialogBody.innerHTML = `<p class="text-xl font-bold mb-2">Role: <span class="${role_data.role==='Cultist'?'text-red-400':'text-blue-400'}">${role_data.role}</span></p><p class="mb-4">${role_data.objective}</p>`;
         const buttonContainer = document.createElement('div');
         buttonContainer.className = 'mt-6 flex flex-col gap-3';
         const confirm = document.createElement('button');
         confirm.textContent = 'Understood'; confirm.className = 'action-button bg-gray-600 hover:bg-gray-700 text-white';
-        confirm.onclick = () => { overlay.remove(); updateGUI(); };
+        // --- TWEAK 2B: Chain the popups ---
+        confirm.onclick = () => { 
+            overlay.remove(); 
+            showContractDialog(contract_data); // Show contract next
+        };
         buttonContainer.appendChild(confirm);
         dialogContent.appendChild(buttonContainer);
     }
 
+    // --- START: NEW CONTRACT DIALOG ---
+    function showContractDialog(contract_data) {
+        let selectedTarget = null;
+        const { overlay, dialogContent, dialogBody, closeButton } = createDialog(`New Contract: ${contract_data.name}`);
+        closeButton.remove(); // Can't close this
+        
+        const baseItemStyle = 'p-2 my-1 bg-gray-600 rounded-md cursor-pointer hover:bg-gray-500 transition duration-150 ease-in-out';
+        const selectedItemStyle = 'p-2 my-1 bg-blue-500 text-white rounded-md cursor-pointer hover:bg-blue-600 transition duration-150 ease-in-out';
+        
+        // Button container
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3';
+        
+        // Buttons
+        const acceptButton = document.createElement('button');
+        acceptButton.textContent = 'Accept Contract';
+        
+        const rejectButton = document.createElement('button');
+        rejectButton.textContent = 'Reject Contract';
+        rejectButton.className = 'action-button bg-red-600 hover:bg-red-700 text-white';
+
+        function render() {
+            dialogBody.innerHTML = ''; // Clear
+            
+            // Description
+            const desc = document.createElement('p');
+            desc.className = 'text-center mb-4';
+            desc.textContent = contract_data.description;
+            dialogBody.appendChild(desc);
+
+            // --- START OF FIX: Check contract target type ---
+            if (playerRole === 'Villager') {
+                // Check if this contract is 'self' targeting (like Lamb of God)
+                if (contract_data.target_type === 'self') {
+                    // This is a self-target contract. No player list needed.
+                    const selfMsg = document.createElement('p');
+                    selfMsg.className = 'text-center text-blue-300 font-bold mt-4';
+                    selfMsg.textContent = 'This contract applies only to you.';
+                    dialogBody.appendChild(selfMsg);
+
+                    // Button Logic: Can always accept
+                    acceptButton.disabled = false;
+                    acceptButton.className = 'action-button bg-blue-600 hover:bg-blue-700 text-white';
+
+                } else {
+                    // This is an 'other' target contract (like Brother's Keeper)
+                    const targetHeader = document.createElement('h4');
+                    targetHeader.className = 'font-bold mb-2';
+                    targetHeader.textContent = `Select 1 Player:`; // More generic
+                    dialogBody.appendChild(targetHeader);
+                    
+                    const otherPlayers = alivePlayersInfo.filter(p => p.player_id !== playerId);
+                    if (otherPlayers.length === 0) {
+                        dialogBody.appendChild(document.createTextNode("No other players to select."));
+                    }
+                    
+                    otherPlayers.forEach(p => {
+                        const item = document.createElement('div');
+                        item.textContent = p.name;
+                        const isSelected = selectedTarget && selectedTarget.name === p.name;
+                        item.className = isSelected ? selectedItemStyle : baseItemStyle;
+                        item.onclick = () => {
+                            selectedTarget = isSelected ? null : p;
+                            render(); // Re-render to update selection
+                        };
+                        dialogBody.appendChild(item);
+                    });
+                    
+                    // --- Button Logic ---
+                    const canAccept = selectedTarget !== null;
+                    acceptButton.disabled = !canAccept;
+                    acceptButton.className = canAccept ? 'action-button bg-blue-600 hover:bg-blue-700 text-white' : 'action-button disabled-button';
+                }
+                
+            } else { // Is a Cultist
+            // --- END OF FIX ---
+                const cultistMsg = document.createElement('p');
+                cultistMsg.className = 'text-center text-red-400 font-bold mt-4';
+                cultistMsg.textContent = 'Only Villagers may accept contracts. Your Cultist masters see this as a sign of weakness.';
+                dialogBody.appendChild(cultistMsg);
+                
+                acceptButton.disabled = true;
+                acceptButton.className = 'action-button disabled-button';
+            }
+        }
+        
+        // --- Button Click Handlers ---
+        acceptButton.onclick = () => {
+            // --- START OF FIX: Handle 'self' vs 'other' contracts ---
+            if (playerRole === 'Villager') {
+                if (contract_data.target_type === 'self') {
+                    // No target name needed for 'self' contracts
+                    socket.emit('contract_response', {
+                        contract_key: contract_data.key,
+                        accepted: true
+                        // No target_player_name
+                    });
+                } else if (selectedTarget) {
+                    // This is for 'other' contracts like Brother's Keeper
+                    socket.emit('contract_response', {
+                        contract_key: contract_data.key,
+                        accepted: true,
+                        target_player_name: selectedTarget.name
+                    });
+                }
+            }
+            // --- END OF FIX ---
+
+    // --- START OF FIX ---
+    // These were moved outside the 'if' block.
+    // If the button is clicked, we *always*
+    // want to close the popup and update the GUI.
+    overlay.remove();
+    updateGUI();
+    // --- END OF FIX ---
+};
+        
+        rejectButton.onclick = () => {
+            socket.emit('contract_response', {
+                contract_key: contract_data.key,
+                accepted: false
+            });
+            overlay.remove(); // Just close
+            updateGUI(); // <-- ADD THIS LINE
+        };
+
+        buttonContainer.appendChild(acceptButton);
+        buttonContainer.appendChild(rejectButton);
+        dialogContent.appendChild(buttonContainer);
+        
+        render(); // Initial render
+    }
+    // --- END: NEW CONTRACT DIALOG ---
+
     function showPrivateMessageDialog(title, message) {
         const { overlay, dialogContent, dialogBody, closeButton } = createDialog(title);
         closeButton.textContent = 'Understood';
+        
+        // Style the button
+        closeButton.className = 'action-button mt-4 bg-blue-600 hover:bg-blue-700 text-white';
+        
         dialogBody.innerHTML = `<p class="text-purple-300 font-bold italic text-center">${message}</p>`;
-    }
 
-    function showRevealedHandDialog(targetName, hand) {
-        const { overlay, dialogContent, dialogBody, closeButton } = createDialog(`${targetName}'s Hand`);
-        closeButton.textContent = 'Got it';
-        if (hand.length > 0) {
-            const cardList = hand.map(card => `<div class="bg-gray-700 p-2 my-1 rounded-md text-center">${card.name}</div>`).join('');
-            dialogBody.innerHTML = cardList;
-        } else {
-            dialogBody.innerHTML = `<p class="text-gray-400 text-center">This player has no cards.</p>`;
-        }
+        // --- START OF NEW FIX ---
+        // Create a container for the button, just like in the other popups
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3';
+        
+        // Add the button to the container
+        buttonContainer.appendChild(closeButton);
+        
+        // Add the container to the dialog
+        dialogContent.appendChild(buttonContainer);
+        // --- END OF NEW FIX ---
     }
 
     function showThirdEyeVisionDialog(vision) {
         const { overlay, dialogContent, dialogBody, closeButton } = createDialog("Third Eye Vision");
         closeButton.textContent = 'Close Vision';
+        // Make it blue
+        closeButton.className = 'action-button mt-4 bg-blue-600 hover:bg-blue-700 text-white';
+
         if (vision && vision.length > 0) {
             let content = '<div class="space-y-3">';
             vision.forEach(item => {
@@ -914,6 +1365,12 @@ function updateActionButton(){
         } else {
             dialogBody.innerHTML = `<p class="text-gray-400 text-center">Your vision reveals nothing. No other players have cards.</p>`;
         }
+        
+        // Add the button container
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3';
+        buttonContainer.appendChild(closeButton);
+        dialogContent.appendChild(buttonContainer);
     }
 
     function showCompulsionInitialDialog(isSelected) {
@@ -993,10 +1450,22 @@ function updateActionButton(){
             item.onclick = () => { socket.emit('cultist_kill_vote', { target_player_name: p.name }); overlay.remove(); };
             dialogBody.appendChild(item);
         });
+        // --- START OF FIX ---
+
+        // 1. Create the button container, just like in your example
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3';
+
+        // 2. Create the button with the correct style from your example
         const cancelBtn = document.createElement('button');
-        cancelBtn.textContent = 'Cancel'; cancelBtn.className = 'action-button mt-4 bg-red-600 hover:bg-red-700';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.className = 'action-button bg-red-600 hover:bg-red-700 text-white'; // No 'mt-4', added 'text-white'
         cancelBtn.onclick = () => overlay.remove();
-        dialogContent.appendChild(cancelBtn);
+        
+        // 3. Add the button to the container, and the container to the dialog
+        buttonContainer.appendChild(cancelBtn);
+        dialogContent.appendChild(buttonContainer);
+        // --- END OF FIX ---
     }
 
     function showApocalypseVoteDialog() {
@@ -1222,6 +1691,95 @@ function showHarbingerKillDialog() {
 
         render(); // This initial call draws the dialog for the first time
     }
+    
+    function showResurrectionAssistDialog(data) {
+        // data = { ritual_id, caster_name, target_name }
+        let selectedSacrifices = []; // Array of card objects
+        // --- START OF FIX ---
+        // 1. We only get these four items from createDialog
+        const { overlay, dialogContent, dialogBody, closeButton } = createDialog("Resurrection Ritual");
+        // 2. We create our own buttonContainer here, just like in showHarbingerKillDialog
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3';
+        dialogContent.appendChild(buttonContainer);
+        // --- END OF FIX ---
+        closeButton.remove(); // Can't close this dialog
+
+        const baseItemStyle = 'p-2 my-1 bg-gray-600 rounded-md cursor-pointer hover:bg-gray-500 transition duration-150 ease-in-out';
+        const selectedItemStyle = 'p-2 my-1 bg-blue-500 text-white rounded-md cursor-pointer hover:bg-blue-600 transition duration-150 ease-in-out';
+        const disabledItemStyle = 'p-2 my-1 bg-gray-800 text-gray-500 rounded-md cursor-not-allowed';
+
+        function render() {
+            dialogBody.innerHTML = ''; // Clear
+            buttonContainer.innerHTML = ''; // Clear
+
+            const msg = document.createElement('p');
+            msg.className = 'text-center mb-4';
+            msg.innerHTML = `<strong class="text-purple-300">${data.caster_name}</strong> is using black magic to resurrect <strong class="text-gray-400">${data.target_name}</strong>! You have been selected to assist. You must sacrifice 2 cards to help, or you can sabotage the ritual.`;
+            dialogBody.appendChild(msg);
+
+            const sacrificeHeader = document.createElement('h4');
+            sacrificeHeader.className = 'font-bold mt-4 mb-2';
+            sacrificeHeader.textContent = `Select 2 Cards to Sacrifice:`;
+            dialogBody.appendChild(sacrificeHeader);
+
+            if (playerHand.length < 2) {
+                 const errorMsg = document.createElement('p');
+                 errorMsg.className = 'text-red-400 text-sm';
+                 errorMsg.textContent = 'You do not have enough cards to sacrifice.';
+                 dialogBody.appendChild(errorMsg);
+            }
+            
+            playerHand.forEach(c => {
+                const item = document.createElement('div');
+                item.textContent = c.name;
+                const isSelected = selectedSacrifices.find(s => s.id === c.id);
+                let isDisabled = !isSelected && selectedSacrifices.length >= 2;
+
+                item.className = isDisabled ? disabledItemStyle : (isSelected ? selectedItemStyle : baseItemStyle);
+                item.onclick = () => {
+                    if (isDisabled) return;
+                    if (isSelected) {
+                        selectedSacrifices = selectedSacrifices.filter(s => s.id !== c.id);
+                    } else {
+                        selectedSacrifices.push(c);
+                    }
+                    render();
+                };
+                dialogBody.appendChild(item);
+            });
+
+            // --- Button Logic ---
+            const sacrificeButton = document.createElement('button');
+            sacrificeButton.textContent = 'Sacrifice 2 Cards';
+            const canSacrifice = playerHand.length >= 2 && selectedSacrifices.length === 2;
+            sacrificeButton.disabled = !canSacrifice;
+            sacrificeButton.className = canSacrifice ? 'action-button bg-blue-600 hover:bg-blue-700 text-white' : 'action-button disabled-button';
+            sacrificeButton.onclick = () => {
+                socket.emit('submit_ritual_response', {
+                    ritual_id: data.ritual_id,
+                    sacrificed_card_ids: selectedSacrifices.map(c => c.id)
+                });
+                overlay.remove();
+            };
+
+            const sabotageButton = document.createElement('button');
+            sabotageButton.textContent = 'Sabotage Ritual';
+            sabotageButton.className = 'action-button bg-red-600 hover:bg-red-700 text-white';
+            sabotageButton.onclick = () => {
+                socket.emit('submit_ritual_response', {
+                    ritual_id: data.ritual_id,
+                    sacrificed_card_ids: [] // Empty array means sabotage
+                });
+                overlay.remove();
+            };
+
+            buttonContainer.appendChild(sacrificeButton);
+            buttonContainer.appendChild(sabotageButton);
+        }
+
+        render();
+    }
 
     function initiateCardPlay(card, dialogElements) {
       if (card.name === 'Feed the Maggots' || card.name === 'Lazarus') {
@@ -1230,7 +1788,7 @@ function showHarbingerKillDialog() {
           return;
       }
 
-      const targetTypes = ["other_player", "two_players", "dead_player", "self", "other"];
+      const targetTypes = ["other_player", "two_players", "dead_player", "self", "other", "multi_target_ritual"];
       if (targetTypes.includes(card.target_type)) {
           promptForPlayerTarget(card, dialogElements);
       } else {
@@ -1244,18 +1802,77 @@ function showHarbingerKillDialog() {
     }
 
     function promptForPlayerTarget(card, dialogElements) {
-        let selectedTargets = [];
+        let selectedTargets = []; // For standard targeting
+        let selectedRitualTarget = []; // For ritual: [dead_player_name]
+        let selectedRitualAssistants = []; // For ritual: [living_1, living_2, living_3]
         let selectedSacrifices = []; 
         const { overlay, dialogContent, dialogBody } = dialogElements;
         dialogContent.querySelector('h2').textContent = `Play: ${card.name}`;
         dialogContent.querySelectorAll('button').forEach(b => b.remove());
         const baseItemStyle = 'p-2 my-1 bg-gray-600 rounded-md cursor-pointer hover:bg-gray-500 transition duration-150 ease-in-out';
         const selectedItemStyle = 'p-2 my-1 bg-blue-500 text-white rounded-md cursor-pointer hover:bg-blue-600 transition duration-150 ease-in-out';
+        const disabledItemStyle = 'p-2 my-1 bg-gray-800 text-gray-500 rounded-md cursor-not-allowed';
 
         function render() {
-            dialogBody.innerHTML = ''; 
+            dialogBody.innerHTML = ''; // Clear body
             
-            if (card.target_type !== 'self' && card.target_type !== 'other') {
+            // --- START: NEW RITUAL LOGIC ---
+            if (card.target_type === 'multi_target_ritual') {
+                // --- Part 1: Select Dead Target ---
+                const targetHeader = document.createElement('h4');
+                targetHeader.className = 'font-bold mb-2';
+                targetHeader.textContent = `Select 1 Dead Player to Resurrect:`;
+                dialogBody.appendChild(targetHeader);
+
+                if (deadPlayersInfo.length === 0) {
+                    dialogBody.appendChild(document.createTextNode("There are no dead players to resurrect."));
+                }
+                deadPlayersInfo.forEach(p => {
+                    const item = document.createElement('div');
+                    item.textContent = p.name;
+                    const isSelected = selectedRitualTarget.includes(p.name);
+                    item.className = isSelected ? selectedItemStyle : baseItemStyle;
+                    item.onclick = () => {
+                        selectedRitualTarget = isSelected ? [] : [p.name]; // Only allow one
+                        render();
+                    };
+                    dialogBody.appendChild(item);
+                });
+
+                // --- Part 2: Select Living Assistants ---
+                const assistHeader = document.createElement('h4');
+                assistHeader.className = 'font-bold mt-4 mb-2';
+                assistHeader.textContent = `Select 3 Living Players to Assist:`;
+                dialogBody.appendChild(assistHeader);
+
+                const eligibleAssistants = alivePlayersInfo.filter(p => p.player_id !== playerId);
+                if (eligibleAssistants.length < 3) {
+                     dialogBody.appendChild(document.createTextNode("Not enough living players to assist."));
+                }
+                eligibleAssistants.forEach(p => {
+                    const item = document.createElement('div');
+                    item.textContent = p.name;
+                    const isSelected = selectedRitualAssistants.includes(p.name);
+                    let isDisabled = !isSelected && selectedRitualAssistants.length >= 3;
+                    
+                    item.className = isDisabled ? disabledItemStyle : (isSelected ? selectedItemStyle : baseItemStyle);
+                    
+                    item.onclick = () => {
+                        if (isDisabled) return;
+                        if (isSelected) {
+                            selectedRitualAssistants = selectedRitualAssistants.filter(t => t !== p.name);
+                        } else {
+                            selectedRitualAssistants.push(p.name);
+                        }
+                        render();
+                    };
+                    dialogBody.appendChild(item);
+                });
+                
+            // --- END: NEW RITUAL LOGIC ---
+
+            } else if (card.target_type !== 'self' && card.target_type !== 'other') {
+                // --- This is the ORIGINAL logic for all other cards ---
                 const numTargets = card.target_type === 'two_players' ? 2 : 1;
                 const targetList = card.target_type === 'dead_player' ? deadPlayersInfo : alivePlayersInfo;
                 const targetHeader = document.createElement('h4');
@@ -1289,6 +1906,7 @@ function showHarbingerKillDialog() {
                 selectedTargets = [playerName];
             }
 
+            // --- Sacrifice Logic (Unchanged, but vital) ---
             if (card.sacrifice_cards > 0) {
                 const sacrificeHeader = document.createElement('h4');
                 sacrificeHeader.className = 'font-bold mt-4 mb-2';
@@ -1304,38 +1922,38 @@ function showHarbingerKillDialog() {
                      dialogBody.appendChild(errorMsg);
                 }
                 
-                selectedSacrifices.forEach(c => {
+                availableForSacrifice.forEach(c => {
                     const item = document.createElement('div');
                     item.textContent = c.name;
-                    item.className = selectedItemStyle;
+                    const isSelected = selectedSacrifices.find(s => s.id === c.id);
+                    item.className = isSelected ? selectedItemStyle : baseItemStyle;
                     item.onclick = () => {
-                        selectedSacrifices = selectedSacrifices.filter(s => s.id !== c.id);
+                        if (isSelected) {
+                            selectedSacrifices = selectedSacrifices.filter(s => s.id !== c.id);
+                        } else {
+                            if (selectedSacrifices.length < card.sacrifice_cards) {
+                                selectedSacrifices.push(c);
+                            }
+                        }
                         render();
                     };
                     dialogBody.appendChild(item);
                 });
-
-                availableForSacrifice.forEach(c => {
-                    if (!selectedSacrifices.find(s => s.id === c.id)) {
-                        const item = document.createElement('div');
-                        item.textContent = c.name;
-                        item.className = baseItemStyle;
-                        item.onclick = () => {
-                            if (selectedSacrifices.length < card.sacrifice_cards) {
-                                selectedSacrifices.push(c);
-                            }
-                            render();
-                        };
-                        dialogBody.appendChild(item);
-                    }
-                });
             }
 
-            const numTargetsRequired = (card.target_type === 'self' || card.target_type === 'none' || card.target_type === 'other') ? 0 : (card.target_type === 'two_players' ? 2 : 1);
-            const targetsMet = selectedTargets.length === numTargetsRequired || (card.target_type === 'self') || (card.target_type === 'other');
+            // --- Button & Confirmation Logic (Updated) ---
+            let targetsMet = false;
+            if (card.target_type === 'multi_target_ritual') {
+                targetsMet = selectedRitualTarget.length === 1 && selectedRitualAssistants.length === 3;
+            } else {
+                const numTargetsRequired = (card.target_type === 'self' || card.target_type === 'none' || card.target_type === 'other') ? 0 : (card.target_type === 'two_players' ? 2 : 1);
+                targetsMet = selectedTargets.length === numTargetsRequired || (card.target_type === 'self') || (card.target_type === 'other');
+            }
+            
             const sacrificesMet = selectedSacrifices.length === card.sacrifice_cards;
             const canConfirm = targetsMet && sacrificesMet;
 
+            // --- Button rendering (Updated) ---
             if (!dialogContent.querySelector('.action-button')) {
                 const buttonContainer = document.createElement('div');
                 buttonContainer.className = 'mt-6 flex flex-col gap-3';
@@ -1352,24 +1970,38 @@ function showHarbingerKillDialog() {
             const confirmButton = dialogContent.querySelector('button:not(.bg-red-600)');
             confirmButton.disabled = !canConfirm;
             confirmButton.className = canConfirm ? 'action-button bg-blue-600 hover:bg-blue-700 text-white' : 'action-button disabled-button';
+            
             confirmButton.onclick = () => {
                 if (!canConfirm) return;
+                
                 let eventName;
                 if (currentPhase === 'Evening' || currentPhase === 'Dusk') eventName = 'submit_evening_cards';
                 else if (currentPhase === 'Voting') eventName = 'play_voting_card';
                 else eventName = 'play_any_phase_card';
                 
+                // --- UPDATED: Build correct target object ---
+                let cardTargets = {};
+                if (card.target_type === 'multi_target_ritual') {
+                    cardTargets = {
+                        [card.id]: {
+                            target: selectedRitualTarget[0],
+                            assistants: selectedRitualAssistants
+                        }
+                    };
+                } else {
+                    cardTargets = { [card.id]: selectedTargets };
+                }
+                
                 socket.emit(eventName, { 
                     selected_card_ids: [card.id], 
                     sacrifice_card_ids: selectedSacrifices.map(c => c.id), 
-                    card_targets: { [card.id]: selectedTargets } 
+                    card_targets: cardTargets
                 });
                 overlay.remove();
             };
         }
         render();
     }
-
     // --- Tutorial Logic ---
     function showTutorial() {
         const tutorialModal = document.getElementById('tutorial-modal');
@@ -1382,7 +2014,7 @@ function showHarbingerKillDialog() {
             },
             {
                 title: "CHANGES & FIXES",
-                content: " <br><br> FIXES:<strong> The Apocalypse</strong> has been fixed and now works as intended. <br><br> CHANGES: <strong>False Idol</strong> can now be played to end <strong>The Apocalypse</strong> before voting begins!"
+                content: "<br><strong> The Apocalypse</strong> has been fixed and now works as intended. <br><strong>False Idol</strong> can now be played to end <strong>The Apocalypse</strong> before voting begins!<br><br><strong>Contracts</strong> have been added to the game!<br><br>Two new cards, <strong>Doppelgänger</strong> and <strong>Resurrection Ritual</strong>, have been added!<br><br>Doppelgänger lets you steal another player's role. Why kill the Cultists when you can become one yourself?<br><br>Resurrection Ritual allows you (and three friends) to bring one of the dead back to life, but be wary of sabotage!"
             },
             {
                 title: "ROLES",
@@ -1390,7 +2022,11 @@ function showHarbingerKillDialog() {
             },
             {
                 title: "POINTS",
-                content: "<strong>CULTISTS!</strong> is played in multiple rounds. Regardless of whether you are dead or alive, if your side wins by the end of the game, you will earn 2 points.<br><br>But be careful, Cultists! Among you may be an <strong>Enlightened Cultist</strong>. Their goal is to be the only living Cultist. <br><br>If they are the only Cultist left, this will be announced. If they survive until the following Morning, they automatically win and earn 4 points."
+                content: "<strong>CULTISTS!</strong> is played in multiple rounds (usually best of three or five). Whomever earns the most points wins! <br><br>Regardless of whether you are dead or alive, if your side wins by the end of the game, you will earn 2 points.<br><br>But be careful, Cultists! Among you may be an <strong>Enlightened Cultist</strong>. Their goal is to be the only living Cultist. <br><br>If they are the only Cultist left, this will be announced. If they survive until the following Morning, they automatically win and earn 4 points.<br><br> Points can also be earned by signing a <strong>Contract</strong> at the start of the game."
+            },
+            {
+                title: "NEW MECHANIC: CONTRACTS!",
+                content: "Each player will receive a <strong>Contract</strong>, but only Villagers can sign them! These are secondary objectives to complete over the course of the game. <br><br>If you accept and sign your Contract, you will earn 1 extra point if you succeed, but lose 1 point if you fail!<br><br>For example, <strong>Brother's Keeper</strong> requires you to select another player who must survive until the end of the game, so do everything you can to protect them!"
             },
             {
                 title: "GAMEPLAY",
@@ -1400,10 +2036,6 @@ function showHarbingerKillDialog() {
                 title: "CARDS",
                 content: "You will receive a new card every Morning.<br><br>Cards can sabotage your opponents, reveal new information, and protect you from attacks! Information about each card can be viewed by tapping the card on the left.<br><br>Many cards require you to sacrifice cards in order to play them.<br><br>Some cards cause temporary in-person effects. For example, if <strong>Silence</strong> is played against you, you cannot speak or gesture in-person while the yellow banner is present!"
             },
-            {
-                title: "NEW MECHANIC!",
-                content: "Each player will receive a <strong>Hand of Glory</strong>, a macabre artifact capable of preventing Cultists for killing you for one Night!<br><br>However, the flames of the Hand extinguish by Morning. This card may only be played <strong>once</strong> per game, so use it wisely!"
-            }
         ];
 
         let currentPage = 0;
