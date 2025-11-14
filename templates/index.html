@@ -361,9 +361,30 @@
         color: #431407;
     }
     /* --- END: NEW TOOLTIP STYLES --- */
+    
+    /* --- START: Splash Screen --- */
+    #splash-screen {
+      opacity: 1;
+      visibility: visible;
+      /* This defines the 1-second fade-out animation */
+      transition: opacity 1.0s ease-out, visibility 0s linear 1.0s;
+    }
+    #splash-screen.fade-out {
+      opacity: 0;
+      visibility: hidden;
+      /* Prevents the invisible layer from blocking clicks */
+      pointer-events: none; 
+    }
+    /* --- END: Splash Screen --- */
   </style>
 </head>
-<body class="flex flex-col text-sm">
+<body class="flex flex-col text-base">
+
+  <div id="splash-screen" class="fixed inset-0 flex items-center justify-center z-[2000]" style="background-color: #1a202c;">
+    <h1 class="tutorial-title text-8xl text-red-600 animate-pulse">
+      CULTISTS!
+    </h1>
+  </div>
   <!-- --- START: ADD TOOLTIP CONTAINER --- -->
   <!-- This is the hidden tooltip element. JS will show/move it. -->
   <div id="status-tooltip-container"></div>
@@ -410,34 +431,46 @@
       </div>
 
   </div>
-  <div id="tutorial-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-      <div class="tutorial-modal-content w-full max-w-2xl rounded-2xl shadow-2xl border border-gray-700 p-6 md:p-8 flex flex-col">
-          
-          <div id="tutorial-content" class="flex-grow mb-6 text-gray-300">
-              </div>
+  <div id="tutorial-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+    <div class="tutorial-modal-content w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl border border-gray-700 p-6 md:p-8 flex flex-col overflow-hidden">
+        
+        <div id="tutorial-content" class="flex-grow mb-6 text-gray-300 overflow-y-auto">
+            </div>
 
-          <div id="progress-dots" class="flex justify-center items-center mb-6 space-x-3">
-              </div>
+        <div id="progress-dots" class="flex justify-center items-center mb-6 space-x-3 flex-shrink-0">
+            </div>
 
-          <div class="flex flex-col items-center space-y-4">
-              <div class="flex justify-center w-full space-x-4">
-                  <button id="prev-btn" class="nav-button w-1/2 bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-lg shadow-lg">
-                      Previous
-                  </button>
-                  <button id="next-btn" class="nav-button w-1/2 bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-lg shadow-lg">
-                      Next
-                  </button>
-              </div>
-              <button id="skip-btn" class="nav-button w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg">
-                  Skip Tutorial
-              </button>
-          </div>
-      </div>
-  </div>
+        <div class="flex flex-col items-center space-y-4 flex-shrink-0">
+            <div class="flex justify-center w-full space-x-4">
+                <button id="prev-btn" class="nav-button w-1/2 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">
+                    Previous
+                </button>
+                <button id="next-btn" class="nav-button w-1/2 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">
+                    Next
+                </button>
+            </div>
+            <button id="skip-btn" class="nav-button w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">
+                Skip Tutorial
+            </button>
+        </div>
+    </div>
+</div>
 
 
   <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
   <script>
+    // --- START: Splash Screen Logic ---
+    // The DOM is already loaded, so we run this code immediately.
+    const splash = document.getElementById('splash-screen');
+    if (splash) {
+      // 1. Wait 2 seconds (2000ms) for the title to be visible
+      setTimeout(() => {
+        // 2. Add the 'fade-out' class to start the 1-second fade
+        splash.classList.add('fade-out');
+      }, 2000); // 2s visible + 1s fade = 3s total
+    }
+    // --- END: Splash Screen Logic ---
+
     const savedPlayerId = localStorage.getItem('cultist_player_id');
     const socket = io({ auth: { player_id: savedPlayerId } });
 
@@ -474,7 +507,7 @@
         violent_delights_quest: { bannerText: 'VIOLENT DELIGHTS IN PROGRESS', bannerClasses: 'violent-delights-banner', isPrivate: true },
         divine_protection: { bannerText: 'I HAVE SEEN THE LIGHT', bannerClasses: 'halo-effect', highlightClasses: 'halo-effect' },
         lazarus_effect: { bannerText: 'RESURRECTED', bannerClasses: 'decaying', highlightClasses: 'decaying', isPrivate: true },
-        harbinger_quest: { bannerText: 'HARBINGER OF DOOM ACTIVE', bannerClasses: 'bg-gray-900 border-red-500 text-red-300 animate-pulse', isPrivate: false }
+        harbinger_quest: { bannerText: 'HARBINGER OF DOOM ACTIVE', bannerClasses: 'bg-gray-900 border-red-500 text-red-300 animate-pulse', isPrivate: false, isGlobal: true }
     };
 
     const phaseBanner = document.getElementById('phase-banner'), timerDisplay = document.getElementById('timer-display'), progressDisplay = document.getElementById('action-progress'), playerHandDiv = document.getElementById('player-hand'), announcementsArea = document.getElementById('announcements-area'), playerListArea = document.getElementById('player-list-area'), actionButton = document.getElementById('action-button'), effectBannersContainer = document.getElementById('effect-banners-container');
@@ -510,14 +543,13 @@
         playerIsAlive = data.is_alive; 
         playerIsAsleep = data.is_asleep; 
 
-    // --- START OF FIX ---
-    // The 'if' condition was removed. We *want* this data to update
-    // in the background. The updateGUI() call is now triggered
-    // *after* the contract dialog is closed.
-    // --- END OF FIX ---
+    // --- START OF THE FIX ---
+    // This logic ensures the GUI *is* updated for all private state changes
+    // (like sleeping), but *not* during the initial role/contract popups.
     if (currentPhase !== "Evening" || roundNumber !== 0) {
-        updateGUI();
+    updateGUI();
     }
+    // --- END OF THE FIX ---
     });
     socket.on('action_confirmed', data => console.log('✔️', data.message));
     socket.on('error', data => { alert(`Error: ${data.message}`); console.error(data.message); });
@@ -553,7 +585,7 @@
     });
     // --- END OF NEW HANDLER ---
     socket.on('private_announcement', data => {
-        showPrivateMessageDialog("A Private Message", data.message);
+        showPrivateMessageDialog("The Dark God whispers to you...", data.message);
     });
 
     socket.on('show_player_hand', data => {
@@ -575,7 +607,12 @@
     socket.on('prompt_harbinger_kill', () => {
         showHarbingerKillDialog();
     });
-    
+    // --- ADD THIS NEW HANDLER ---
+    socket.on('force_lobby_refresh', data => {
+        console.log('[LOBBY] Player count was set by another player. Reloading...');
+        location.reload(); // Force page refresh
+    });
+    // --- END OF NEW HANDLER ---
     socket.on('play_tolling_bell', () => {
         playTollingBell();
     });
@@ -707,6 +744,10 @@
           let effectText = effectName.replace(/_/g, ' ');
           if (effectName === 'delirium') {
               effectText = 'Delirious';
+          } else if (effectName === 'eternal_winter') {
+                effectText = 'Sing Baby Sing';
+          } else if (effectName === 'silence') {
+                effectText = 'Silenced';
           }
           effectDiv.textContent = effectText;
           // --- END OF TWEAK 1 ---
@@ -775,12 +816,13 @@
       // Show private banners only to the affected player
       if (playerId) {
           for (const key in playerStatusEffects) {
-              if (STATUS_UI_MAP[key] && STATUS_UI_MAP[key].isPrivate) {
+              const ui = STATUS_UI_MAP[key]; // Get the UI info
+              // This is the fix: check if the UI mapping exists AND 'isPrivate' is true
+              if (ui && ui.isPrivate) { 
                   bannersToShow.add(key);
               }
           }
       }
-
       if (!playerIsAlive) {
           bannersToShow.add('silence');
       }
@@ -877,6 +919,11 @@
             let effectsList = [];
             for (const effectKey in effectsSource) {
                 const ui = STATUS_UI_MAP[effectKey];
+
+                // NEVER show Hand of Glory in tooltips (it should be completely secret)
+                if (effectKey === 'hand_of_glory_protection') {
+                    continue; // Skip this effect entirely
+                }
                 
                 // Only add if it's a known, visible effect
                 if (ui && (ui.bannerText || ui.highlightClasses)) {
@@ -1010,11 +1057,7 @@ function updateActionButton(){
             disabled = hasReadied;
         } else { // Evening logic
             const canAct = playerIsAlive || (!playerIsAlive && playerHand.length > 0);
-            // --- START OF FIX ---
-            // The delirium check has been removed. Delirium should not prevent a player
-            // from ending their turn, only from playing cards (which is handled elsewhere).
             disabled = !canAct || hasSubmitted;
-            // --- END OF FIX ---
         }
         
         actionButton.textContent = currentPhase === "Dusk" ? "Ready for Evening" : "Confirm Cards";
@@ -1062,29 +1105,43 @@ function updateActionButton(){
                 actionButton.disabled = false;
             }
         } else {
-            actionButton.textContent = playerIsAsleep ? "Awaken" : "Sleep";
-            actionButton.onclick = () => socket.emit('toggle_sleep');
-            actionButton.disabled = false;
-            actionButton.className = playerIsAsleep ? 'action-button w-full' : 'action-button w-full sleep-button';
-        }
+              // --- START OF CRASH FIX ---
+              const asleep = (typeof playerIsAsleep !== 'undefined') ? playerIsAsleep : false;
+              actionButton.textContent = asleep ? "Awaken" : "Sleep";
+              // --- END OF CRASH FIX ---
+              
+              actionButton.onclick = () => socket.emit('toggle_sleep');
+
+              // --- ADD THESE LINES BACK ---
+              actionButton.disabled = false; 
+              actionButton.className = asleep ? 'action-button w-full' : 'action-button w-full sleep-button';
+              // --- END OF FIX ---
+          }
         if(!actionButton.disabled) actionButton.classList.remove('disabled-button');
         return;
       }
       if(currentPhase === "Voting") {
         const me = alivePlayersInfo.find(p => p.player_id === playerId);
 
-        if ('vote_restriction' in playerStatusEffects) {
-            actionButton.textContent = "Cannot Participate (Screams from the Void)";
-            actionButton.disabled = true;
-            actionButton.className = 'action-button w-full disabled-button';
-            return;
-        }
+        // --- START OF STUCK GAME FIX ---
+        // The 'vote_restriction' check was moved from here...
+        // --- END OF STUCK GAME FIX ---
 
         if (votingSubPhase === 'Nomination') {
+          // --- START OF STUCK GAME FIX ---
+          // ...and moved here, to only block Nomination.
+          if ('vote_restriction' in playerStatusEffects) {
+              actionButton.textContent = "Cannot Nominate (Screams from the Void)";
+              actionButton.disabled = true;
+              actionButton.className = 'action-button w-full disabled-button';
+              return; // This 'return' is critical
+          }
+          // --- END OF STUCK GAME FIX ---
           actionButton.textContent = "Nominate a Player";
           actionButton.onclick = showNominationDialog;
           actionButton.disabled = !playerIsAlive;
         } else if (votingSubPhase === 'Speaking') {
+          // This phase is just "readying up". vote_restriction does NOT block this.
           const isReady = me ? me.is_ready_for_execution : false;
           const allSpeakersDone = currentSpeaker === null && nominatedSpeakers.length > 0;
           actionButton.textContent = allSpeakersDone ? "Ready for Execution Vote" : "Waiting for speakers...";
@@ -1092,6 +1149,15 @@ function updateActionButton(){
           actionButton.disabled = !playerIsAlive || !allSpeakersDone || isReady;
           if (isReady) actionButton.textContent = "Waiting for others...";
         } else if (votingSubPhase === 'Execution') {
+          // --- START OF STUCK GAME FIX ---
+          // ...and also added here, to block the final vote.
+          if ('vote_restriction' in playerStatusEffects) {
+              actionButton.textContent = "Cannot Vote (Screams from the Void)";
+              actionButton.disabled = true;
+              actionButton.className = 'action-button w-full disabled-button';
+              return; // This 'return' is critical
+          }
+          // --- END OF STUCK GAME FIX ---
           const hasVoted = me ? me.has_voted : false;
           actionButton.textContent = "Vote to Execute";
           actionButton.onclick = showExecutionVoteDialog;
@@ -1100,7 +1166,7 @@ function updateActionButton(){
         }
         if (!actionButton.disabled) actionButton.className = 'action-button w-full bg-blue-600 hover:bg-blue-700';
       }
-    }
+}
 
     function createDialog(title){
       const overlay = document.createElement('div');
@@ -1182,6 +1248,7 @@ function updateActionButton(){
         // --- TWEAK 2B: Chain the popups ---
         confirm.onclick = () => { 
             overlay.remove(); 
+            roleData = null; // <-- ADD THIS LINE
             showContractDialog(contract_data); // Show contract next
         };
         buttonContainer.appendChild(confirm);
@@ -1266,7 +1333,7 @@ function updateActionButton(){
             // --- END OF FIX ---
                 const cultistMsg = document.createElement('p');
                 cultistMsg.className = 'text-center text-red-400 font-bold mt-4';
-                cultistMsg.textContent = 'Only Villagers may accept contracts. Your Cultist masters see this as a sign of weakness.';
+                cultistMsg.textContent = 'Only Villagers may accept contracts.';
                 dialogBody.appendChild(cultistMsg);
                 
                 acceptButton.disabled = true;
@@ -1342,6 +1409,38 @@ function updateActionButton(){
         // Add the container to the dialog
         dialogContent.appendChild(buttonContainer);
         // --- END OF NEW FIX ---
+    }
+
+    function showRevealedHandDialog(playerName, hand) {
+        // Create the dialog with the player's name in the title
+        const { overlay, dialogContent, dialogBody, closeButton } = createDialog(`${playerName}'s Hand`);
+        
+        // Style the close button
+        closeButton.textContent = 'Close';
+        closeButton.className = 'action-button mt-4 bg-blue-600 hover:bg-blue-700 text-white';
+
+        if (hand && hand.length > 0) {
+            let content = '<div class="space-y-2">';
+            // Loop through the hand and display each card
+            hand.forEach(card => {
+                content += `
+                    <div class="bg-gray-700 p-2 rounded-md text-center">
+                        <span class="text-gray-200 font-semibold">${card.name}</span>
+                    </div>
+                `;
+            });
+            content += '</div>';
+            dialogBody.innerHTML = content;
+        } else {
+            // Show a message if the player's hand is empty
+            dialogBody.innerHTML = `<p class="text-gray-400 text-center">${playerName} has no cards in their hand.</p>`;
+        }
+        
+        // Add the button container just like your other dialogs
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex flex-col gap-3';
+        buttonContainer.appendChild(closeButton);
+        dialogContent.appendChild(buttonContainer);
     }
 
     function showThirdEyeVisionDialog(vision) {
@@ -2014,7 +2113,16 @@ function showHarbingerKillDialog() {
             },
             {
                 title: "CHANGES & FIXES",
-                content: "<br><strong> The Apocalypse</strong> has been fixed and now works as intended. <br><strong>False Idol</strong> can now be played to end <strong>The Apocalypse</strong> before voting begins!<br><br><strong>Contracts</strong> have been added to the game!<br><br> You may now tap and hold player names to see their current afflictions.<br><br>Two new cards, <strong>Doppelgänger</strong> and <strong>Resurrection Ritual</strong>, have been added!<br><br>Doppelgänger lets you steal another player's role. Why kill the Cultists when you can become one yourself?<br><br>Resurrection Ritual allows you (and three friends) to bring one of the dead back to life, but be wary of sabotage!"
+                content: "<ul class='list-disc list-inside text-left space-y-2 mt-4'>" +
+                            "<li><strong>The Apocalypse</strong> has been fixed and now works as intended.</li>" +
+                            "<li><strong>False Idol</strong> can now be- played to end <strong>The Apocalypse</strong> before voting begins!</li>" +
+                            "<li><strong>Contracts</strong> have been added to the game!</li>" +
+                            "<li>Two new cards, <strong>Doppelgänger</strong> and <strong>Resurrection Ritual</strong>, have been added!</li>" +
+                            "<ul class='list-disc list-inside text-left ml-6 space-y-1 mt-1'>" +
+                                    "<li>Doppelgänger lets you steal another player's role. Why kill the Cultists when you can become one yourself?</li>" +
+                                    "<li>Resurrection Ritual allows you (and three friends) to bring one of the dead back to life, but be wary of sabotage!</li>" +
+                            "</ul>" +
+                        "</ul>"
             },
             {
                 title: "ROLES",
@@ -2031,6 +2139,24 @@ function showHarbingerKillDialog() {
             {
                 title: "GAMEPLAY",
                 content: "Each round consist of four phases: <strong>Morning</strong>, <strong>Voting</strong>, <strong>Evening</strong>, and <strong>Night</strong>.<br><br>During the <strong>Morning</strong>, learn who was killed the previous <strong>Night</strong>, hear announcements, and debate.<br><br>During <strong>Voting</strong>, nominate and vote to execute players suspected of being Cultists!<br><br>During <strong>Evening</strong>, play cards from your hand.<br><br>During <strong>Night</strong>, everyone closes their eyes. Cultists then awaken and vote on who to kill."
+            },
+            {
+                title: "HOW THE NIGHT PHASE WORKS",
+                content: `
+                    <p class="text-yellow-300 font-bold text-center mb-4">Please turn up your phone's volume before starting the game!</p>
+
+                    <p class="mb-4">During the <strong>Night</strong> phase, you will be presented with a <span class="font-bold" style="color: #8b5cf6;">Sleep</span> button. All players must close their eyes after pressing <span class="font-bold" style="color: #8b5cf6;">Sleep</span>!</p>
+
+                    <p class="mb-4">A few seconds after all players have closed their eyes, you will hear a knocking sound. This is the signal for the <span class="text-red-400 font-bold">Cultists</span> to open their eyes and select who to kill. After voting, all <span class="text-red-400 font-bold">Cultists</span> must immediately close their eyes.</p>
+
+                    <p class="mb-4">All players will reopen their eyes once they hear a chime!</p>
+
+                    <p class="font-bold text-lg mb-2">Just remember:</p>
+                        <ul class="list-disc list-inside text-left space-y-2 ml-4">
+                            <li>If you are a <span class="text-blue-400 font-bold">Villager</span>, close your eyes when you press <span class="font-bold" style="color: #8b5cf6;">Sleep</span> and do not open them until you hear a chime!</li>
+                            <li>If you are a <span class="text-red-400 font-bold">Cultist</span>, close your eyes when you press <span class="font-bold" style="color: #8b5cf6;">Sleep</span>, open them and vote on who to kill when you hear knocking, then close them immediately. Open your eyes again with everyone when you hear a chime!</li>
+                        </ul>
+    `
             },
             {
                 title: "CARDS",
@@ -2057,7 +2183,7 @@ function showHarbingerKillDialog() {
         function showPage(pageIndex) {
             const page = tutorialPages[pageIndex];
             contentContainer.innerHTML = `
-                <h2 class="tutorial-title text-5xl md:text-6xl font-bold text-purple-400 text-center mb-4">${page.title}</h2>
+                <h2 class="tutorial-title text-5xl md:text-6xl font-bold text-red-600 text-center mb-4">${page.title}</h2>
                 <p class="text-base md:text-lg leading-relaxed text-center">${page.content}</p>
             `;
             updateNavigation();
