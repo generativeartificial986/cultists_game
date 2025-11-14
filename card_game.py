@@ -112,12 +112,12 @@ CARD_DEFINITIONS = {
     },
     "Third Eye": {
         "name": "Third Eye",
-        "description": "Glimpse one card in the hand of every player!",
+        "description": "Select one player and secretly look at all cards in their hand. If the player you select is a Cultist, they will be notified that you looked at their cards.",
         "phase_restriction": ["Evening"],
-        "target_type": "other",
+        "target_type": "other_player",  # <-- CHANGED
         "effect_type": "third_eye",
-        "is_public": True,
-        "reveals_player": True,
+        "is_public": False,             # <-- CHANGED
+        "reveals_player": False,        # <-- CHANGED
         "sacrifice_cards": 1,
         "dead_card": False,
         "duration_rounds": 0,
@@ -628,7 +628,7 @@ class GameState:
                 message += " " + " ".join(death_summaries)
             
             message += " Villagers win!"
-            self.public_announcements.append(message)
+            #self.public_announcements.append(message)
             return True, "Villager"
         if num_villagers_alive <= num_cultists_alive:
             # --- START OF FIX ---
@@ -661,7 +661,7 @@ class GameState:
                 message += " " + " ".join(death_summaries)
             
             message += " Cultists win!"
-            self.public_announcements.append(message)
+            #self.public_announcements.append(message)
             # --- END OF FIX ---
             return True, "Cultist"
 # --- START OF FIX ---
@@ -670,7 +670,7 @@ class GameState:
         # --- END OF FIX ---
 
     def advance_phase(self):
-        if self.current_phase != "Night" and self.current_phase != "GameOver":
+        if self.current_phase != "Night" and self.current_phase != "GameOver" and self.current_phase != "Voting":
             self.public_announcements = []
 
         if self.current_phase == "Lobby":

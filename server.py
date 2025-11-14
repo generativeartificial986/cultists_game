@@ -21,7 +21,7 @@ clients = {}             # Maps SID -> player_id
 player_name_to_id = {}   # Maps player name -> player_id
 
 # --- Configuration Constants ---
-INITIAL_HAND_SIZE = 3
+INITIAL_HAND_SIZE = 10
 # REMOVED: EVENING_TIMER_SECONDS is no longer needed
 VOTING_NOMINATION_TIMER_SECONDS = 30
 VOTING_SPEAKER_TIMER_SECONDS = 30
@@ -94,7 +94,7 @@ def handle_connect(auth):
     broadcast_game_state()
 
 @socketio.on('disconnect')
-def handle_disconnect():
+def handle_disconnect(reason=None):
     """Handles client disconnection and cleans up."""
     sid = request.sid
     print(f"[DISCONNECT] SID={sid}")
@@ -168,7 +168,13 @@ def handle_set_desired_player_count(data):
 
     game_state.desired_players_count = count
     print(f"[LOBBY] Desired player count set to: {count}")
+    
+    # Notify the setter
     emit('prompt_for_name', room=sid)
+    
+    # NEW: Force all OTHER clients to reload so they see the name prompt
+    emit('force_lobby_refresh', {"message": "Player count has been set. Refreshing..."}, broadcast=True, include_self=False)
+    
     broadcast_game_state()
 
 @socketio.on('player_name_submit')
@@ -1029,6 +1035,8 @@ def increment_contract_avoid(player_id):
         print(f"[CONTRACT] {player.name} incremented 'Thick Skinned' avoid count to {count}.")
 # --- END: New Contract Helper ---
 
+# --- PASTE THIS INTO YOUR NEW server.py ---
+
 def resolve_game_end_contracts(winner_role):
     """
     Called at game over. Resolves all contracts and calculates scores.
@@ -1144,7 +1152,6 @@ def resolve_game_end_contracts(winner_role):
         game_state.public_announcements.append(summary_line)
         print(f"  {summary_line}")
     # --- END OF TWEAK ---
-# --- Game Logic Helpers ---
 
 def assign_roles():
     """Assigns Cultist or Villager to each player."""
@@ -1192,12 +1199,13 @@ def broadcast_game_state():
             p_dict['is_ready_for_execution'] = pid in game_state.voters_ready_for_execution
             public["alive_players"].append(p_dict)
     public["dead_players"] = [ p.to_dict() for pid, p in game_state.players.items() if not p.is_alive and pid in connected_pids ]
-    for sid, pid in clients.items():
+    
+    for sid, pid in list(clients.items()):
         if pid in game_state.players:
             socketio.emit('game_state_update', public, room=sid)
-            private = game_state.get_player_private_state(pid)
-            private["is_asleep"] = game_state.players[pid].is_asleep
-            socketio.emit('private_player_state', private, room=sid)
+            private_state = game_state.get_player_private_state(pid)
+            private_state["is_asleep"] = game_state.players[pid].is_asleep  # <-- ADD THIS LINE BACK
+            socketio.emit('private_player_state', private_state, room=sid)
 
 def start_game_logic():
     """Starts Evening 0, reveals roles and objectives."""
@@ -1340,15 +1348,18 @@ def apply_card_effect(player_id, card_obj, target_list=None, sid=None):
     # --- END OF FIX ---
     t1_obj = game_state.get_player_by_name(t1_name) if t1_name else None
 
-    if t1_obj and 'immolated' in t1_obj.status_effects and player_id != t1_obj.player_id:
-        if not 'burning' in player.status_effects:
-            # --- START OF FIX ---
-            # The duration is now 3 to ensure it lasts for 2 full rounds.
-            # The delayed_actions logic has been removed.
-            player.apply_status_effect('burning', 2)
-            game_state.public_announcements.append(f"{player.name} caught fire! They will die in two rounds unless saved.")
-            print(f"[EFFECT] {player.name} caught fire from attacking {t1_obj.name}.")
-            # --- END OF FIX ---
+    # FIX: Only living players can catch fire from immolation
+
+    if (t1_obj and 'immolated' in t1_obj.status_effects and 
+        player_id != t1_obj.player_id and 
+        player.is_alive):  # ADD THIS CHECK
+
+        if t1_obj and 'immolated' in t1_obj.status_effects and player_id != t1_obj.player_id:
+            if not 'burning' in player.status_effects:
+                player.apply_status_effect('burning', 3)
+                game_state.public_announcements.append(f"{player.name} caught fire! They will die in two rounds unless saved.")
+                print(f"[EFFECT] {player.name} caught fire from attacking {t1_obj.name}.")
+                # --- END OF FIX ---
             
             # --- START: NEW Lamb of God (Immolation) Failure Check ---
             # Check if the IMMOLATED player (t1_obj) has the contract.
@@ -1395,21 +1406,31 @@ def apply_card_effect(player_id, card_obj, target_list=None, sid=None):
             game_state.public_announcements.append(f"{player.name} played Compulsion, but no Cultists could be found.")
             print(f"[QUEST] {player.name} played Compulsion, but no living cultists exist.")
     elif card_obj.effect_type == "third_eye":
-        player_sid = next((sid for sid, p_id in clients.items() if p_id == player_id), None)
-        if player_sid:
-            revealed_cards = []
-            for other_pid in game_state.alive_players:
-                if other_pid != player_id:
-                    other_player = game_state.get_player(other_pid)
-                    if other_player and other_player.hand:
-                        random_card = random.choice(other_player.hand)
-                        revealed_cards.append({
-                            "player_name": other_player.name,
-                            "card": random_card.to_dict()
-                        })
-            socketio.emit('show_third_eye_vision', {'vision': revealed_cards}, room=player_sid)
-        game_state.public_announcements.append(f"{player.name} received a vision from the Dark God, revealing a single card from each player's hand!")
-        print(f"[CARD] {player.name} played Third Eye.")
+        # t1_obj is the target player, defined at the top of the function
+        if t1_obj:
+            # --- START: Third Eye Tweak ---
+
+            # 1. Show the full hand to the player who cast the card
+            player_sid = next((sid for sid, p_id in clients.items() if p_id == player_id), None)
+            if player_sid:
+                target_hand = [card.to_dict() for card in t1_obj.hand]
+                # We reuse the 'show_player_hand' event, which index.html
+                # already knows how to display using showRevealedHandDialog.
+                socketio.emit('show_player_hand', {'player_name': t1_obj.name, 'hand': target_hand}, room=player_sid)
+
+            # 2. Notify the target *if* they are a Cultist
+            if t1_obj.role == "Cultist":
+                target_sid = next((sid for sid, p_id in clients.items() if p_id == t1_obj.player_id), None)
+                if target_sid:
+                    notification_msg = f"{player.name} has just seen your cards!"
+                    socketio.emit('private_announcement', {"message": notification_msg}, room=target_sid)
+            
+            # 3. No public announcement, just a server log
+            print(f"[CARD] {player.name} played Third Eye on {t1_obj.name}.")
+            
+            # --- END: Third Eye Tweak ---
+        else:
+            print(f"[CARD] {player.name} played Third Eye but target was invalid.")
     elif card_obj.effect_type == "protect":
         if t1_obj:
             game_state.pending_night_actions.append({ "target_id": t1_obj.player_id, "effect_type": "protect", "source_id": player_id, "is_counterable": False, "is_countered": False, "effect_data": {"duration": card_obj.duration_rounds} })
@@ -1472,7 +1493,7 @@ def apply_card_effect(player_id, card_obj, target_list=None, sid=None):
         if non_cultist_ids:
             revealed_id = random.choice(non_cultist_ids)
             revealed_name = game_state.players[revealed_id].name
-            message = f"The Dark God whispers a name to you... {revealed_name} is not a Cultist."
+            message = f"You have had a revelation...{revealed_name} is not a Cultist."
             socketio.emit('private_announcement', {"message": message}, room=player_sid)
         else:
             message = "The Dark God finds no one worthy of its whispers."
@@ -1492,7 +1513,7 @@ def apply_card_effect(player_id, card_obj, target_list=None, sid=None):
 
         game_state.public_announcements.append(f"{player.name} prays to the Dark God, and is driven mad by what they hear. They have learned the name of one player who is not a Cultist.")
     elif card_obj.effect_type == "feed_the_beast":
-        game_state.public_announcements.append(f"After dying, {player.name} decided to feed the maggots, causing all players to lose their cards!")
+        game_state.public_announcements.append(f"After dying, {player.name} decided to Feed the Maggots, causing all players to lose their cards!")
         for alive_pid in game_state.alive_players:
             alive_player = game_state.get_player(alive_pid)
             if alive_player:
