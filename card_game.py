@@ -298,7 +298,7 @@ CARD_DEFINITIONS = {
         "effect_type": "apocalypse_vote",
         "is_public": True,
         "reveals_player": True,
-        "sacrifice_cards": 1,
+        "sacrifice_cards": 3,
         "dead_card": False,
         "duration_rounds": 0,
     },
