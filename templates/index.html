@@ -470,6 +470,14 @@
       }, 2000); // 2s visible + 1s fade = 3s total
     }
     // --- END: Splash Screen Logic ---
+    (function() {
+        const originalSetItem = localStorage.setItem;
+        localStorage.setItem = function(key, value) {
+            originalSetItem.call(localStorage, key, value);
+            // Force Safari to persist by immediately reading back
+            localStorage.getItem(key);
+        };
+    })();
 
     const savedPlayerId = localStorage.getItem('cultist_player_id');
     const socket = io({ auth: { player_id: savedPlayerId } });
@@ -619,6 +627,33 @@
     // --- START OF NEW LISTENER ---
     socket.on('prompt_resurrection_assist', (data) => {
         showResurrectionAssistDialog(data);
+    });
+    // NEW: Success reconnection handler
+    socket.on('reconnection_success', data => {
+        // Store the player_id (critical for Safari)
+        localStorage.setItem('cultist_player_id', data.player_id);
+        playerId = data.player_id;
+        
+        // Show success message
+        alert(`${data.message}\n\nPhase: ${data.phase}, Round: ${data.round}`);
+        
+        console.log('[RECONNECT] Successfully reconnected as', playerId);
+        updateGUI();
+    });
+
+    // NEW: Show reconnection options (for manual selection)
+    socket.on('show_reconnect_options', data => {
+        showReconnectDialog(data.available_players);
+    });
+
+    // NEW: Lobby full handler
+    socket.on('lobby_full', data => {
+        alert(data.message);
+    });
+
+    // NEW: Heartbeat ping/pong
+    socket.on('ping', () => {
+        socket.emit('pong');
     });
     // --- END OF NEW LISTENER ---
     // START: ADD THE NEW, CORRECT LISTENER HERE
@@ -851,6 +886,10 @@
       let phaseText = currentPhase.toUpperCase();
       if (currentPhase === 'Voting') {
         phaseText += ` - ${votingSubPhase.toUpperCase()}`;
+      }
+      // Add space to ApocalypseVote
+      if (phaseText === 'APOCALYPSEVOTE') {
+        phaseText = 'APOCALYPSE VOTE';
       }
       phaseBanner.textContent = `${phaseText}, ROUND ${roundNumber}`;
       
@@ -1253,6 +1292,36 @@ function updateActionButton(){
         };
         buttonContainer.appendChild(confirm);
         dialogContent.appendChild(buttonContainer);
+    }
+
+    function showReconnectDialog(availablePlayers) {
+        const { overlay, dialogContent, dialogBody, closeButton } = createDialog("Reconnect to Game");
+        closeButton.remove(); // Can't skip reconnection
+        
+        dialogBody.innerHTML = '<p class="text-center mb-4">The game is in progress. Select your player to reconnect:</p>';
+        
+        const baseItemStyle = 'p-3 my-2 bg-gray-600 rounded-md cursor-pointer hover:bg-blue-500 transition duration-150 ease-in-out text-center';
+        
+        availablePlayers.forEach(player => {
+            const item = document.createElement('div');
+            item.className = baseItemStyle;
+            
+            let statusText = player.is_alive ? '✅ Alive' : '💀 Dead';
+            item.innerHTML = `<strong>${player.name}</strong> <span class="text-sm text-gray-300">${statusText}</span>`;
+            
+            item.onclick = () => {
+                socket.emit('reconnect_as_player', { player_id: player.player_id });
+                overlay.remove();
+            };
+            
+            dialogBody.appendChild(item);
+        });
+        
+        // Add a note at the bottom
+        const note = document.createElement('p');
+        note.className = 'text-xs text-gray-400 text-center mt-4';
+        note.textContent = 'Select your player to continue playing';
+        dialogBody.appendChild(note);
     }
 
     // --- START: NEW CONTRACT DIALOG ---
@@ -2114,8 +2183,9 @@ function showHarbingerKillDialog() {
             {
                 title: "CHANGES & FIXES",
                 content: "<ul class='list-disc list-inside text-left space-y-2 mt-4'>" +
+                            "<li>Thanks to Remi :) more robust reconnect logic has been added, with a special fix for folks using Safari!</li>" +
                             "<li><strong>The Apocalypse</strong> has been fixed and now works as intended.</li>" +
-                            "<li><strong>False Idol</strong> can now be- played to end <strong>The Apocalypse</strong> before voting begins!</li>" +
+                            "<li><strong>False Idol</strong> can now be played to end <strong>The Apocalypse</strong> before voting begins!</li>" +
                             "<li><strong>Contracts</strong> have been added to the game!</li>" +
                             "<li>Two new cards, <strong>Doppelgänger</strong> and <strong>Resurrection Ritual</strong>, have been added!</li>" +
                             "<ul class='list-disc list-inside text-left ml-6 space-y-1 mt-1'>" +
