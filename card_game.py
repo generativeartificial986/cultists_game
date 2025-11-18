@@ -28,7 +28,7 @@ DECK_COMPOSITION = {
     "Silence": 90,
     "The Apocalypse": 30, 
     "Doppelgänger": 20,
-    "Resurrection Ritual": 100,
+    "Resurrection Ritual": 30,
 
     # --- Dead Player Cards ---
     "Oh God, Please! Anything But This!": 30,
