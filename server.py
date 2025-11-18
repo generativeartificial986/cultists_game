@@ -21,7 +21,7 @@ clients = {}             # Maps SID -> player_id
 player_name_to_id = {}   # Maps player name -> player_id
 
 # --- Configuration Constants ---
-INITIAL_HAND_SIZE = 3
+INITIAL_HAND_SIZE = 10
 # REMOVED: EVENING_TIMER_SECONDS is no longer needed
 VOTING_NOMINATION_TIMER_SECONDS = 30
 VOTING_SPEAKER_TIMER_SECONDS = 30
@@ -44,53 +44,142 @@ def reset_game():
 
 @socketio.on('connect')
 def handle_connect(auth):
-    """Handles new client connections, with auth reuse of existing player_id."""
+    """Handles new client connections with improved reconnection logic."""
     sid = request.sid
     print(f"[CONNECT] SID={sid} auth={auth}")
 
-    # 1) Reattach existing player if client sent valid player_id
+    # 1) Try to reconnect existing player
     pid = None
     if auth:
         requested = auth.get('player_id')
         if requested and requested in game_state.players:
             pid = requested
+            print(f"[RECONNECT] Player {game_state.players[pid].name} reconnecting...")
 
     if pid:
+        # Successful reconnection
+        old_sid = next((s for s, p_id in clients.items() if p_id == pid), None)
+        if old_sid and old_sid != sid:
+            # Remove old SID mapping
+            clients.pop(old_sid, None)
+            print(f"[RECONNECT] Removed stale SID {old_sid} for {pid}")
+        
         clients[sid] = pid
         join_room(sid)
-        emit('initial_connect', {"player_id": pid}, room=sid)
+        
+        player = game_state.players[pid]
+        emit('reconnection_success', {
+            "player_id": pid,
+            "message": f"Welcome back, {player.name}!",
+            "phase": game_state.current_phase,
+            "round": game_state.round_number
+        }, room=sid)
+
+        # Explicitly send private state immediately after reconnection
+        private_state = game_state.get_player_private_state(pid)
+        private_state["is_asleep"] = player.is_asleep
+        socketio.emit('private_player_state', private_state, room=sid)
+        print(f"[RECONNECT] Sent private state to {player.name}: {len(player.hand)} cards")
+        
         broadcast_game_state()
         return
 
-    # 2) Observers during game
+    # 2) Handle new connections during active game
     if game_state.current_phase != "Lobby":
-        if sid in clients:
-            pid = clients[sid]
-            join_room(sid)
-            emit('initial_connect', {"player_id": pid}, room=sid)
-            broadcast_game_state()
-            return
-        emit('game_in_progress',
-             {"message": "Game already in progress. You are observing."},
-             room=sid)
+        # Check if there are any disconnected players (in game_state.players but not in clients)
+        connected_pids = set(clients.values())
+        disconnected_players = [
+            p for p_id, p in game_state.players.items() 
+            if p_id not in connected_pids
+        ]
+        
+        if disconnected_players:
+            # Show reconnection options
+            emit('show_reconnect_options', {
+                "message": "Game in progress. Select your player to reconnect:",
+                "available_players": [
+                    {"player_id": p.player_id, "name": p.name, "is_alive": p.is_alive}
+                    for p in disconnected_players
+                ]
+            }, room=sid)
+        else:
+            # All players connected, become observer
+            emit('game_in_progress', {
+                "message": "Game in progress. All players are connected. You are observing."
+            }, room=sid)
         return
 
-    # 3) New lobby connection: create temp guest
-    temp_id = f"temp_player_{sid}"
-    if temp_id not in game_state.players:
-        guest_num = 1 + sum(1 for p in game_state.players.values()
-                            if p.name.startswith("Guest_"))
-        game_state.add_player(temp_id, f"Guest_{guest_num}")
-    clients[sid] = temp_id
-    join_room(sid)
-    print(f"[LOBBY] New temp player: {temp_id}")
-    emit('initial_connect', {"player_id": temp_id}, room=sid)
-
-    if game_state.desired_players_count == 0:
+    # 3) New player joining lobby
+    if not game_state.desired_players_count or game_state.desired_players_count == 0:
+        # First player - they set the count
+        temp_id = f"temp_player_{sid}"
+        game_state.add_player(temp_id, f"Host")
+        clients[sid] = temp_id
+        join_room(sid)
+        
+        emit('initial_connect', {"player_id": temp_id}, room=sid)
         emit('prompt_set_player_count', room=sid)
     else:
+        # Subsequent player - join if room available
+        current_named_players = sum(
+            1 for p in game_state.players.values() 
+            if not p.name.startswith("Guest_")
+        )
+        
+        if current_named_players >= game_state.desired_players_count:
+            emit('lobby_full', {
+                "message": f"Lobby is full ({game_state.desired_players_count} players)"
+            }, room=sid)
+            return
+        
+        temp_id = f"temp_player_{sid}"
+        guest_num = 1 + sum(
+            1 for p in game_state.players.values()
+            if p.name.startswith("Guest_")
+        )
+        game_state.add_player(temp_id, f"Guest_{guest_num}")
+        clients[sid] = temp_id
+        join_room(sid)
+        
+        emit('initial_connect', {"player_id": temp_id}, room=sid)
         emit('prompt_for_name', room=sid)
+    
+    broadcast_game_state()
 
+@socketio.on('reconnect_as_player')
+def handle_reconnect_as_player(data):
+    """Handles manual reconnection when player selects from list."""
+    sid = request.sid
+    selected_pid = data.get('player_id')
+    
+    if not selected_pid or selected_pid not in game_state.players:
+        emit('error', {"message": "Invalid player selection."}, room=sid)
+        return
+    
+    # Check if player is already connected from another session
+    old_sid = next((s for s, p_id in clients.items() if p_id == selected_pid), None)
+    if old_sid and old_sid != sid:
+        clients.pop(old_sid, None)
+        print(f"[RECONNECT] Removed stale SID {old_sid} for {selected_pid}")
+    
+    clients[sid] = selected_pid
+    player = game_state.players[selected_pid]
+    
+    # Store the player_id in their client's localStorage
+    emit('reconnection_success', {
+        "player_id": selected_pid,
+        "message": f"Reconnected as {player.name}",
+        "phase": game_state.current_phase,
+        "round": game_state.round_number
+    }, room=sid)
+
+    # Explicitly send private state immediately after reconnection
+    private_state = game_state.get_player_private_state(selected_pid)
+    private_state["is_asleep"] = player.is_asleep
+    socketio.emit('private_player_state', private_state, room=sid)
+    print(f"[RECONNECT] Sent private state to {player.name}: {len(player.hand)} cards")
+    
+    
     broadcast_game_state()
 
 @socketio.on('disconnect')
@@ -331,6 +420,8 @@ def handle_submit_evening_cards(data):
             game_state.public_announcements.append(f"{p_name} succumbed to their burns and died!")
             kill_player(p_id, "Burning")
         # --- END OF FIX ---
+
+        socketio.sleep(4)
 
         game_state.advance_phase()
         broadcast_game_state()
@@ -2155,9 +2246,30 @@ def index():
     """Serve the main client page."""
     return render_template('index.html')
 
+def heartbeat_checker():
+    """Periodically checks if clients are still connected."""
+    while True:
+        socketio.sleep(30)  # Check every 30 seconds
+        
+        for sid, pid in list(clients.items()):
+            try:
+                socketio.emit('ping', room=sid)
+            except:
+                # Client is truly disconnected
+                print(f"[HEARTBEAT] Lost connection to {sid}")
+                # Don't remove player from game_state, just from clients
+                clients.pop(sid, None)
+                broadcast_game_state()
+
+@socketio.on('pong')
+def handle_pong():
+    """Receives pong response from clients."""
+    pass  # Just need to receive it
+
 if __name__ == '__main__':
     reset_game()
     socketio.start_background_task(game_loop)
+    socketio.start_background_task(heartbeat_checker)  # ADD THIS LINE
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting Flask-SocketIO server on port {port}")
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
